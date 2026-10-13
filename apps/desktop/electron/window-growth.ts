@@ -4,7 +4,6 @@ import type { WindowSizeMode } from './window-size-types'
 import { windowSize } from './window-state'
 
 interface WindowSizingOptions {
-  enabled: boolean
   mainWindow: () => BrowserWindow | null
 }
 
@@ -51,11 +50,11 @@ function sizedBounds(mode: WindowSizeMode, bounds: Rectangle, workArea: Rectangl
 // from Settings leaves an existing user's window where it was.
 const beforeOnboarding = new WeakMap<BrowserWindow, Rectangle>()
 
-export function registerWindowSizing({ enabled, mainWindow }: WindowSizingOptions): void {
+export function registerWindowSizing({ mainWindow }: WindowSizingOptions): void {
   ipcMain.on('hermes:window:size', (event, mode: WindowSizeMode) => {
     const win = mainWindow()
 
-    if (!enabled || !win || win.isDestroyed() || event.sender !== win.webContents) {
+    if (!win || win.isDestroyed() || event.sender !== win.webContents) {
       return
     }
 
