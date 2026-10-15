@@ -657,9 +657,10 @@ async def set_curator_paused(body: CuratorPause, profile: Optional[str] = None):
 
 def _spawn_action(argv: list, name: str, prefix: str, profile: Optional[str] = None) -> dict:
     """Spawn a background ``hermes -p <profile> <argv>`` action; a spawn failure is
-    ``500 "<prefix>: <exc>"``."""
+    ``500 "<prefix>: <exc>"``; an unknown or invalid profile stays its 4xx."""
+    profile_args = _profile_cli_args(profile)
     try:
-        proc = _spawn_hermes_action(_profile_cli_args(profile) + argv, name)
+        proc = _spawn_hermes_action(profile_args + argv, name)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{prefix}: {exc}")
     return {"ok": True, "pid": proc.pid, "name": name}

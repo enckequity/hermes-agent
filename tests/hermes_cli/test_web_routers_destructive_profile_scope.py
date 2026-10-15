@@ -271,6 +271,14 @@ def test_spawned_action_carries_the_named_profile(client, homes, seams, tmp_path
     assert [argv[:2] for _name, argv in seams["spawn"]] == [["-p", "worker_beta"]]
 
 
+@pytest.mark.parametrize("route", sorted(SPAWNING))
+def test_spawned_action_for_an_unknown_profile_is_404(client, homes, seams, tmp_path, route):
+    resp = SPAWNING[route](client, "no_such_profile", tmp_path)
+
+    assert resp.status_code == 404, resp.text
+    assert seams["spawn"] == []
+
+
 @pytest.mark.parametrize("route", ["sessions-prune", "sessions-empty", "sessions-bulk-delete"])
 def test_session_route_opens_the_named_profiles_store(client, homes, seams, tmp_path, route):
     resp = DESTRUCTIVE[route](client, "worker_beta", tmp_path)
