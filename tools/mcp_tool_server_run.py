@@ -5,6 +5,7 @@ and tool deregistration. Origin state and patchable helpers are read through ``_
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -185,6 +186,14 @@ class MCPServerRunMixin:
             self._last_park_line = line
             logger.warning(msg, *args)
 
+    def _parked_retry_interval(self) -> float:
+        """Self-probe cadence while parked: per-server ``parked_retry_interval`` seconds (floored at
+        ``_MIN_PARKED_RETRY_INTERVAL``); unset, ``0`` or invalid keeps ``_PARKED_RETRY_INTERVAL``."""
+        seconds = _get_lifecycle_seconds(self._config, "parked_retry_interval")
+        if seconds is None or not math.isfinite(seconds):
+            return _core._PARKED_RETRY_INTERVAL
+        return max(_core._MIN_PARKED_RETRY_INTERVAL, seconds)
+
     async def _park(self, revival_reason: str) -> bool:
         """Drop this server's tools and wait for a reconnect request; True when shutdown came instead.
         The run task must NOT exit (it is the only ``_reconnect_event`` listener, so returning
@@ -205,7 +214,7 @@ class MCPServerRunMixin:
         paused = False
         while True:
             outcome = await self._wait_for_reconnect_or_shutdown(
-                timeout=_core._PARKED_RETRY_INTERVAL)
+                timeout=self._parked_retry_interval())
             if outcome == "shutdown":
                 return True
             # A disabled or deleted config entry must stop the self-probe here: the probe
@@ -408,7 +417,7 @@ class MCPServerRunMixin:
                 self._log_park(
                     "MCP server '%s': %d consecutive reconnects without a healthy session (rapid-drop budget "
                     "exhausted), parking; will self-probe every %ds until it recovers (state: degraded → parked)",
-                    self.name, _core._MAX_RECONNECT_RETRIES, _core._PARKED_RETRY_INTERVAL)
+                    self.name, _core._MAX_RECONNECT_RETRIES, self._parked_retry_interval())
                 if not await self._park_and_rearm("from parked state", budget):
                     return False
         # Clear readiness too: a stale _ready lets handler recovery mistake old for fresh.
@@ -469,7 +478,7 @@ class MCPServerRunMixin:
             self._log_park(
                 "MCP server '%s' failed after %d reconnection attempts, parking; will self-probe every %ds "
                 "until it recovers (state: degraded → parked): %s: %s",
-                self.name, _core._MAX_RECONNECT_RETRIES, _core._PARKED_RETRY_INTERVAL, type(root).__name__, root)
+                self.name, _core._MAX_RECONNECT_RETRIES, self._parked_retry_interval(), type(root).__name__, root)
             return await self._park_and_rearm("from parked state", budget)
         logger.debug("MCP server '%s' connection lost (attempt %d/%d), reconnecting in %.0fs: %s: %s",
                      self.name, self._reconnect_retries, _core._MAX_RECONNECT_RETRIES, budget.backoff,
@@ -521,7 +530,7 @@ class MCPServerRunMixin:
         # Deterministic failure on a working server: park now.
         self._log_park(
             "MCP server '%s' hit a permanent error, parking without retries; will self-probe every %ds "
-            "(state: connected → parked): %s: %s", self.name, _core._PARKED_RETRY_INTERVAL, type(root).__name__, root)
+            "(state: connected → parked): %s: %s", self.name, self._parked_retry_interval(), type(root).__name__, root)
         self._arm_auth_park(root)
         return await self._park_and_rearm("from parked state (permanent error)", budget)
 
