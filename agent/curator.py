@@ -33,6 +33,8 @@ DEFAULT_STALE_AFTER_DAYS, DEFAULT_ARCHIVE_AFTER_DAYS = 14, 30
 # The LLM consolidation fork is opt-in; the deterministic inactivity prune
 # (apply_automatic_transitions) always runs when the curator is enabled.
 DEFAULT_CONSOLIDATE = False
+# Umbrella-building over hundreds of skills takes 50-100 API calls; the default leaves it effectively unbounded.
+DEFAULT_MAX_ITERATIONS = 9999
 
 
 # --- .curator_state — persistent scheduler + status ---
@@ -141,6 +143,11 @@ def get_stale_after_days() -> int:
 
 def get_archive_after_days() -> int:
     return _bounded_count("archive_after_days", DEFAULT_ARCHIVE_AFTER_DAYS)
+
+
+def get_max_iterations() -> int:
+    """API-call budget for the LLM review fork (``curator.max_iterations``), floored at 1."""
+    return _bounded_count("max_iterations", DEFAULT_MAX_ITERATIONS)
 
 
 def get_consolidate() -> bool:
@@ -1114,8 +1121,7 @@ def _run_llm_review(prompt: str) -> dict[str, Any]:
             # mutation goes through ledgered skill_manage; dropping the toolset
             # closes the hole by construction (no command heuristic can).
             enabled_toolsets=["skills"],
-            # Umbrella-building over hundreds of skills takes 50-100 API calls.
-            max_iterations=9999,
+            max_iterations=get_max_iterations(),
             quiet_mode=True, platform="curator", skip_context_files=True, skip_memory=True,
         )
         # Disable recursive nudges — the curator must never spawn its own review.

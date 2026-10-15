@@ -58,6 +58,7 @@ curator:
   stale_after_days: 14
   archive_after_days: 30
   consolidate: false           # LLM umbrella-building pass — opt-in (prune-only by default)
+  max_iterations: 9999         # API-call budget for one consolidation pass (a pass typically needs 50-100)
   prune_builtins: false        # opt in to archiving unused bundled built-in skills too (hub skills always exempt)
 ```
 

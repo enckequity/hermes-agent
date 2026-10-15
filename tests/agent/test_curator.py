@@ -1158,3 +1158,32 @@ def test_threaded_llm_pass_keeps_callers_profile_scope(curator_env, tmp_path, mo
     assert not (root / "skills" / ".curator_state").exists(), "thread wrote the ROOT home's state"
     state = json.loads((profile / "skills" / ".curator_state").read_text(encoding="utf-8-sig"))
     assert state["last_run_summary"].endswith("llm: stub")
+
+
+
+@pytest.mark.parametrize("cfg, expected", [({}, 9999), ({"max_iterations": 50}, 50), ({"max_iterations": 0}, 9999)])
+def test_review_fork_uses_configured_max_iterations(curator_env, monkeypatch, cfg, expected):
+    """``curator.max_iterations`` bounds the review fork's API calls; unset or < 1 keeps the default."""
+    curator = importlib.reload(curator_env["curator"])  # restore the real _run_llm_review
+    captured = {}
+
+    class _StubAgent:
+        def __init__(self, *args, **kwargs):
+            captured["kwargs"] = kwargs
+            self._session_messages = []
+
+        def run_conversation(self, user_message=None, **kwargs):
+            return {"final_response": "ok"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(curator, "_load_config", lambda: cfg)
+    monkeypatch.setattr(curator, "_resolve_review_provider", lambda: ({}, "m", "p", None))
+    monkeypatch.setattr("hermes_cli.config.load_config_readonly", dict)
+    monkeypatch.setattr("run_agent.AIAgent", _StubAgent)
+
+    meta = curator._run_llm_review("review prompt")
+
+    assert meta.get("error") is None, meta.get("error")
+    assert captured["kwargs"]["max_iterations"] == expected
