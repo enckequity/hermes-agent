@@ -701,6 +701,23 @@ async def _admit_run_to_authority(
     return None
 
 
+async def _admit_to_live_owner_or_forget(
+    self, run_id, session_id, user_message, turn_author, idempotency_scope, idempotency_key,
+) -> Optional[tuple]:
+    """``_admit_to_live_bot_chat`` for a registered /v1/runs launch; a failure drops the run."""
+    try:
+        return await self._admit_to_live_bot_chat(session_id, user_message, turn_author)
+    except Exception:
+        # No task will ever run this registration: drop it so status never reports a queued
+        # ghost and an exact Idempotency-Key retry is admitted again instead of replaying it.
+        _forget_run(
+            self, run_id, self._run_streams, self._run_streams_created, self._run_approval_sessions,
+            self._run_statuses, self._run_owners, self._run_idempotency_ids)
+        if idempotency_key:
+            self._run_idempotency_store.forget(idempotency_scope, idempotency_key)
+        raise
+
+
 async def _handle_runs(self, request: web.Request, *, _api_server) -> web.Response:
     """POST /v1/runs — start an agent run, return run_id immediately."""
     _openai_error = _api_server._openai_error
@@ -818,7 +835,9 @@ async def _handle_runs(self, request: web.Request, *, _api_server) -> web.Respon
     # receipt drives this run's status, so `peer run` keeps its run_id and `peer status` still works.
     # Under session authority the same call admits the turn to the Bot Chat's own FIFO, which is
     # why it is decided BEFORE ``admit_api_turn`` would bind the chat as an API conversation.
-    admitted = await self._admit_to_live_bot_chat(session_id, user_message, turn_author) if selected_session_id else None
+    admitted = await _admit_to_live_owner_or_forget(
+        self, run_id, session_id, user_message, turn_author, idempotency_scope, idempotency_key,
+    ) if selected_session_id else None
     if admitted is None and getattr(self.gateway_runner, 'session_authority', None) is not None:
         refused = await _admit_run_to_authority(
             self, launch, run_id, session_history_delivery, _declared_selected,
