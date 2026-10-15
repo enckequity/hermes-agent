@@ -483,8 +483,10 @@ def rescan_gateway_profiles(home: Path, *, timeout: float = 8.0) -> Optional[dic
     return query_gateway_control(home, "rescan-profiles", timeout=timeout)
 
 
-def request_unserve_profile(home: Path, name: str) -> Optional[dict[str, Any]]:
-    return query_gateway_control(home, "unserve-profile", params={"name": name}, timeout=8.0)
+def request_unserve_profile(home: Path, name: str, *, park: bool = False) -> Optional[dict[str, Any]]:
+    """``park=True`` asks the host to write ``gateway.parked`` only once the profile is unserved."""
+    params = {"name": name, "park": True} if park else {"name": name}
+    return query_gateway_control(home, "unserve-profile", params=params, timeout=8.0)
 
 
 def request_serve_profile_hot(home: Path, name: str) -> Optional[dict[str, Any]]:

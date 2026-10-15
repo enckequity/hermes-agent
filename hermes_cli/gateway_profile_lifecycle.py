@@ -72,13 +72,18 @@ def profile_lifecycle(command: str, args) -> bool:
         return False
     host_home = owner.home if owner is not None else get_default_hermes_root()
     if command == "stop":
-        # Persist intent BEFORE teardown: the periodic rescan must not re-add this profile.
-        marker.touch()
-        answer = request_unserve_profile(host_home, name)
+        # The host parks under its reconcile lock once teardown succeeds. A host that answered and
+        # still serves the profile (unserve failed or still running) must not be recorded as parked.
+        answer = request_unserve_profile(host_home, name, park=True)
         if _confirmed(answer, "unserved", name):
+            marker.touch()  # idempotent; also covers a host that predates the park parameter
             print(f"Profile '{name}' parked; its bots and cron are stopped. "
                   f"Start again with: hermes -p {name} gateway start")
+        elif isinstance(answer, dict) and name in (answer.get("served_profiles") or ()):
+            print(f"Profile '{name}' is still served; stop was not confirmed: {_failure(answer)}.")
+            print("It was not parked. The host parks it if a pending stop completes; check gateway status.")
         else:
+            marker.touch()
             print(f"Profile '{name}' parked, but immediate stop was not confirmed: {_failure(answer)}.")
             print("The host drops it on its next rescan (within 30s).")
         return True

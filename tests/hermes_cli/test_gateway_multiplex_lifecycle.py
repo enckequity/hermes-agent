@@ -46,7 +46,7 @@ def test_default_marker_is_ignored_with_one_warning(homes, caplog, multiplex):
 
 
 @pytest.mark.parametrize('verb', ['stop', 'start', 'restart'])
-def test_cli_lifecycle_orders_marker_before_socket(homes, monkeypatch, capsys, verb):
+def test_cli_lifecycle_parks_only_after_confirmed_stop(homes, monkeypatch, capsys, verb):
     from hermes_cli import gateway as gw
     from gateway import control_socket
     root, secondary = homes
@@ -62,9 +62,9 @@ def test_cli_lifecycle_orders_marker_before_socket(homes, monkeypatch, capsys, v
     monkeypatch.setattr(gw, '_host_multiplexer_for_all_verb', lambda: owner)
     calls = []
 
-    def unserve(home, name):
+    def unserve(home, name, park=False):
         assert home == root and name == 'worker'
-        assert marker.exists() is (verb == 'stop')
+        assert not marker.exists() and park is (verb == 'stop')
         calls.append('unserve')
         return {'unserved': name, 'served_profiles': ['default']}
 
@@ -90,6 +90,25 @@ def test_cli_lifecycle_orders_marker_before_socket(homes, monkeypatch, capsys, v
     output = capsys.readouterr().out
     assert {'stop': "Profile 'worker' parked; its bots and cron are stopped.",
             'start': "Profile 'worker' served", 'restart': "Profile 'worker' restarted"}[verb] in output
+
+
+@pytest.mark.parametrize('answer', [{'error': 'RuntimeError: teardown failed'}, {'pending': True}])
+def test_unconfirmed_stop_never_parks_a_still_served_profile(homes, monkeypatch, capsys, answer):
+    answer = {**answer, 'served_profiles': ['default', 'worker']}
+    from hermes_cli import gateway as gw
+    from gateway import control_socket
+    from hermes_cli.gateway_profile_lifecycle import profile_lifecycle
+    root, secondary = homes
+    owner = SimpleNamespace(home=root, profile_label='default', profiles=('default', 'worker'),
+                            describe=lambda: 'test host')
+    monkeypatch.setenv('HERMES_HOME', str(secondary))
+    monkeypatch.setattr(gw, '_current_profile_name', lambda: 'worker')
+    monkeypatch.setattr(gw, 'find_gateway_pids', lambda **kw: [])
+    monkeypatch.setattr(gw, '_served_by_another_host_gateway', lambda *a: owner)
+    monkeypatch.setattr(control_socket, 'request_unserve_profile', lambda home, name, park=False: answer)
+    assert profile_lifecycle('stop', SimpleNamespace()) is True
+    assert not (secondary / 'gateway.parked').exists()
+    assert "Profile 'worker' is still served; stop was not confirmed" in capsys.readouterr().out
 
 
 def test_restart_after_stop_unparks_and_serves_the_profile(homes, monkeypatch, capsys):

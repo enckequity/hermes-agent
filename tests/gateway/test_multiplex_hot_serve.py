@@ -248,6 +248,31 @@ async def test_profile_control_verbs_round_trip_and_refusals(tmp_path, monkeypat
         assert runner._profile_adapters["worker"][Platform.DISCORD].token.endswith("new-worker-token\n")
 
 
+@pytest.mark.asyncio
+async def test_unserve_verb_parks_only_after_a_successful_unserve(tmp_path, monkeypatch):
+    from gateway import run_profile_reconcile as verbs
+    runner, home = _runner(tmp_path, monkeypatch)
+    secondary = _mkprofile(home, "worker", "DISCORD_BOT_TOKEN=worker-token\n")
+    marker = secondary / "gateway.parked"
+    with patch("hermes_cli.profiles.get_active_profile_name", return_value="default"):
+        await runner._start_secondary_profile_adapters()
+        stop = verbs.unserve_profile_verb(runner)
+        real_unserve = runner._unserve_profile
+
+        async def failing_unserve(name, home):
+            raise RuntimeError("teardown failed")
+
+        runner._unserve_profile = failing_unserve
+        failed = await asyncio.to_thread(stop, {"name": "worker", "park": True})
+        assert "teardown failed" in failed["error"]
+        assert failed["served_profiles"] == ["default", "worker"]
+        assert not marker.exists()
+        runner._unserve_profile = real_unserve
+        assert (await asyncio.to_thread(stop, {"name": "worker", "park": True}))["unserved"] == "worker"
+        assert marker.exists()
+        assert _served_record(home) == ["default"]
+
+
 @pytest.mark.platforms("linux")
 @pytest.mark.asyncio
 async def test_profile_lifecycle_over_real_control_socket(tmp_path, monkeypatch):
