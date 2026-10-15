@@ -337,11 +337,8 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
             from tools.process_registry import process_registry
             return bool(process_registry.has_any_active() or process_registry.pending_watchers)
 
-        for label, probe in (("async-delegation", _delegations_active), ("bg-work", _processes_active)):
-            with _log_suppressed(logging.DEBUG, f"scale-to-zero {label} check failed", exc_info=True):
-                if probe():
-                    return True
-        return False
+        # Let a probe error raise: an unreadable source is not idle, and callers fail closed.
+        return _delegations_active() or _processes_active()
 
     @staticmethod
     def _gateway_cfg_section(name: str) -> Optional[dict]:
@@ -480,7 +477,8 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
             active_work_count=self._running_agent_count() + cron_count + api_count,
             seconds_since_last_inbound=time.time() - last_inbound,
             idle_timeout_seconds=self._scale_to_zero_idle_timeout_seconds(),
-            has_live_background_work=self._scale_to_zero_has_live_background_work(),
+            has_live_background_work=_read_or_awake(
+                "background work", self._scale_to_zero_has_live_background_work, True),
         )
 
     def _scale_to_zero_note_real_inbound(self) -> None:

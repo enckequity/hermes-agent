@@ -191,6 +191,20 @@ def test_unreadable_marker_keeps_gateway_awake(hermes_home, monkeypatch):
     assert r._scale_to_zero_is_idle() is False
 
 
+def test_unreadable_background_probe_keeps_gateway_awake(hermes_home, monkeypatch):
+    # A failed delegation/process probe is unknown work, not an idle reading.
+    r = _runner(monkeypatch, last_inbound_at=time.time() - 600)
+    monkeypatch.delattr(r, "_scale_to_zero_has_live_background_work")  # use the real method
+
+    def _boom():
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr("tools.async_delegation.active_count", _boom)
+    with pytest.raises(RuntimeError):
+        r._scale_to_zero_has_live_background_work()
+    assert r._scale_to_zero_is_idle() is False
+
+
 # --- dashboard side: the real handle_ws path touches the marker -------------
 
 
