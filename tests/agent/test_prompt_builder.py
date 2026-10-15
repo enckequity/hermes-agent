@@ -461,6 +461,17 @@ class TestBuildContextFilesPrompt:
         assert "Never give up" not in result
         assert result == ""
 
+    def test_deleted_launch_dir_skips_project_context(self, monkeypatch, caplog):
+        # A long-running process whose launch dir was removed: getcwd raises,
+        # and the prompt build must skip project context instead of crashing.
+        def _gone():
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr("agent.prompt_builder.os.getcwd", _gone)
+        with caplog.at_level(logging.WARNING, logger="agent.prompt_builder"):
+            assert build_context_files_prompt(cwd=None, skip_soul=True) == ""
+        assert any("no longer exists" in r.getMessage() for r in caplog.records)
+
 
 
 

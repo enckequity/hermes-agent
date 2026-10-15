@@ -1871,8 +1871,15 @@ def build_context_files_prompt(
 
     if safe_worker_enabled():
         return ""
-    cwd_path = Path(cwd if cwd is not None else os.getcwd()).resolve()
-    if _project_context_suppressed(cwd, cwd_path, allow_install_tree_fallback):
+    try:
+        cwd_path = Path(cwd if cwd is not None else os.getcwd()).resolve()
+    except OSError:  # launch dir deleted under a long-running process
+        logger.warning("skipping project-context discovery: the working directory no longer exists "
+                       "— set terminal.cwd to your project directory")
+        cwd_path = None
+    if cwd_path is None:
+        sections = []
+    elif _project_context_suppressed(cwd, cwd_path, allow_install_tree_fallback):
         logger.warning(
             "skipping project-context discovery: working-directory resolution fell back to the Hermes "
             "install tree (%s) — set terminal.cwd to your project directory", cwd_path,
