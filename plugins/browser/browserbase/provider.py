@@ -2,7 +2,8 @@
 only (the Nous subscription routes through Browser Use). Config ``browser.cloud_provider:
 "browserbase"``; knobs ``BROWSERBASE_BASE_URL``, ``BROWSERBASE_PROXIES`` (true),
 ``BROWSERBASE_ADVANCED_STEALTH`` (false), ``BROWSERBASE_KEEP_ALIVE`` (true),
-``BROWSERBASE_SESSION_TIMEOUT`` (seconds, max 21600)."""
+``BROWSERBASE_SESSION_TIMEOUT`` (seconds, max 21600), ``BROWSERBASE_CONTEXT_ID`` (unset; when set,
+sessions load and save that Browserbase Context so sign-ins survive across sessions)."""
 
 from __future__ import annotations
 
@@ -80,8 +81,16 @@ class BrowserbaseBrowserProvider(CloudBrowserProvider):
                 logger.warning("Invalid BROWSERBASE_SESSION_TIMEOUT value: %s", custom_timeout_ms)
         if enable_proxies:
             session_config["proxies"] = True
+        browser_settings: dict[str, object] = {}
         if enable_advanced_stealth:
-            session_config["browserSettings"] = {"advancedStealth": True}
+            browser_settings["advancedStealth"] = True
+        # Read via get_secret: a multiplexed gateway scopes each profile's .env, so os.environ
+        # would leak the launch profile's Context into its siblings.
+        context_id = (get_secret("BROWSERBASE_CONTEXT_ID", "") or "").strip()
+        if context_id:
+            browser_settings["context"] = {"id": context_id, "persist": True}
+        if browser_settings:
+            session_config["browserSettings"] = browser_settings
 
         url = f"{config['base_url']}/v1/sessions"
         headers = self._headers(config)
@@ -105,6 +114,7 @@ class BrowserbaseBrowserProvider(CloudBrowserProvider):
             "advanced_stealth": enable_advanced_stealth,
             "keep_alive": enable_keep_alive and "keepAlive" not in dropped,
             "custom_timeout": bool(custom_timeout_ms) and "timeout" in session_config,
+            "persistent_context": bool(context_id),
         }
         feature_str = ", ".join(k for k, v in features_enabled.items() if v)
         logger.info("Created Browserbase session %s with features: %s", session_name, feature_str)
