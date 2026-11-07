@@ -748,8 +748,9 @@ def _maybe_follow_capture(backend: ComputerUseBackend, res: ActionResult, do_cap
         # Recapture the exact window when known: on Linux several unrelated windows may share an app name, so
         # app-only recapture can switch targets.
         exact = {k: (getattr(backend, "_last_target", None) or {}).get(k) for k in ("pid", "window_id")}
-        cap = backend.capture(mode=_capture_after_mode(), **(exact if None not in exact.values()
-                                                            else {"app": getattr(backend, "_last_app", None)}))
+        # After a desktop-scope action there is no window to recapture; retake the full screen it was aimed at.
+        app = getattr(backend, "_last_app", None) or ("screen" if getattr(backend, "_screen_capture", False) else None)
+        cap = backend.capture(mode=_capture_after_mode(), **(exact if None not in exact.values() else {"app": app}))
     except Exception as e:
         logger.warning("follow-up capture failed: %s", e)
         return _text_response(res)

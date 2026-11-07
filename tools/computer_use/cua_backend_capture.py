@@ -42,7 +42,9 @@ _NO_DESKTOP_IMAGE_MSG = ("<get_desktop_state returned no image; the driver may p
                          "try capture(app='<AppName>') for a specific window>")
 _FULL_SCREEN_NOTE = ("full-screen capture has no interactable elements; to act on what you see, call "
                      "capture(app='<AppName>') for that app's clickable element list, or capture(app='desktop') for "
-                     "the desktop shell (wallpaper icons / taskbar) with elements")
+                     "the desktop shell (wallpaper icons / taskbar) with elements. If no app window can be captured, "
+                     "x/y on this image are screen pixels: coordinate click/drag/scroll and type/key act on the screen "
+                     "directly when the driver supports desktop scope")
 
 def _linux_x11_active_window_id() -> Optional[int]:
     """Best-effort read of ``_NET_ACTIVE_WINDOW`` via xprop. Never raises."""
@@ -363,6 +365,7 @@ class _CaptureMixin:
         sc = out.get("structuredContent") or {}
         png_bytes_len, width, height = _png_metrics(png_b64, int(sc.get("screenshot_width") or sc.get("screen_width") or 0),
                                                     int(sc.get("screenshot_height") or sc.get("screen_height") or 0))
+        self._screen_capture = True
         return CaptureResult(mode="vision", width=width, height=height, png_b64=png_b64, app="screen",
                              window_title="Full screen (composited)", png_bytes_len=png_bytes_len,
                              image_mime_type=image_mime_type, note=_FULL_SCREEN_NOTE)

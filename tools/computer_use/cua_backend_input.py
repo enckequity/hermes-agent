@@ -24,9 +24,16 @@ def _refuse(action: str, message: str, **fields: Any) -> ActionResult:
 class _InputMixin:
     """Pointer / keyboard / value-setter actions against the sticky target."""
 
-    def _target_args(self, action: str, *, need_window: bool = False) -> tuple[Optional[ActionResult], dict[str, Any]]:
-        """``(refusal, base args)`` for an input action against the sticky target."""
+    def _target_args(self, action: str, *, need_window: bool = False,
+                     desktop_tool: Optional[str] = None) -> tuple[Optional[ActionResult], dict[str, Any]]:
+        """``(refusal, base args)`` for an input action against the sticky target. With no target at all, right after
+        a full-screen capture whose pixels are screen coordinates, *desktop_tool* (the driver tool about to run) falls
+        back to the driver's window-less ``scope: "desktop"`` form when its live schema accepts ``scope``: windows the
+        driver cannot attribute (e.g. an app in another pid namespace) never become a sticky target."""
         if self._active_pid is None or (need_window and self._active_window_id is None):
+            if (desktop_tool and self._active_pid is None and getattr(self, "_screen_capture", False)
+                    and self._session.supports_input_property(desktop_tool, "scope")):
+                return None, {"scope": "desktop"}
             return _refuse(action, _NO_TARGET_MSG), {}
         return None, {"pid": self._active_pid, **({"window_id": self._active_window_id} if need_window else {})}
 
@@ -81,6 +88,13 @@ class _InputMixin:
             focused = self.bring_to_front(pid=self._active_pid, window_id=self._active_window_id)
             if not focused.ok:
                 return focused
+        if args.get("scope") == "desktop" and not getattr(self, "_desktop_escalated", False):
+            # Record once per session why input left window scope. A session without a capture policy declines;
+            # that is fine, the desktop route does not depend on it.
+            self._desktop_escalated = True
+            if self._session._has_tool("escalate_session"):
+                self._best_effort("escalate_session failed", self.call_tool, "escalate_session",
+                                  {"reason": "no_window_target"})
         result = self._action(action, args)
         if bring_to_front:
             result.meta["foreground_focus"] = {"invoked": True, "tool": "bring_to_front"}
@@ -89,7 +103,8 @@ class _InputMixin:
     def click(self, *, element: Optional[int] = None, x: Optional[int] = None, y: Optional[int] = None,
               button: str = "left", click_count: int = 1, modifiers: Optional[list[str]] = None,
               delivery_mode: Optional[str] = None, bring_to_front: bool = False) -> ActionResult:
-        refusal, args = self._target_args("click")
+        coords_only = element is None and x is not None and y is not None
+        refusal, args = self._target_args("click", desktop_tool="click" if coords_only else None)
         if refusal is not None:
             return refusal
         # Tool is chosen by click_count only; `button` goes through click's enum (the driver rejects unknown
@@ -102,10 +117,14 @@ class _InputMixin:
         if button_norm not in {"left", "right", "middle"}:
             return _refuse("click", f"unknown button {button!r} — expected left, right, middle.")
         tool, args["button"] = ("double_click" if click_count == 2 else "click"), button_norm
-        refusal = self._pointer_args(tool, args, (
-            ("element_index click", {"element_index": element} if element is not None else None),
-            ("coordinate click", {"x": x, "y": y} if x is not None and y is not None else None),
-        ), "click requires element= or x/y.")
+        if "scope" in args:  # double_click has no desktop form; click's `count` carries the multi-click there
+            tool = "click"
+            args.update(x=x, y=y, **({"count": click_count} if click_count > 1 else {}))
+        else:
+            refusal = self._pointer_args(tool, args, (
+                ("element_index click", {"element_index": element} if element is not None else None),
+                ("coordinate click", {"x": x, "y": y} if x is not None and y is not None else None),
+            ), "click requires element= or x/y.")
         if modifiers:
             args["modifier"] = modifiers
         return refusal if refusal is not None else self._run_input_action(tool, args, delivery_mode, bring_to_front)
@@ -114,8 +133,11 @@ class _InputMixin:
              from_xy: Optional[tuple[int, int]] = None, to_xy: Optional[tuple[int, int]] = None,
              button: str = "left", modifiers: Optional[list[str]] = None,
              delivery_mode: Optional[str] = None, bring_to_front: bool = False) -> ActionResult:
-        refusal, args = self._target_args("drag")
-        if refusal is None:
+        coords_only = from_element is None and to_element is None and from_xy is not None and to_xy is not None
+        refusal, args = self._target_args("drag", desktop_tool="drag" if coords_only else None)
+        if "scope" in args:
+            args.update(from_x=int(from_xy[0]), from_y=int(from_xy[1]), to_x=int(to_xy[0]), to_y=int(to_xy[1]))
+        elif refusal is None:
             refusal = self._pointer_args("drag", args, (
                 ("element-based drag", {"from_element": from_element, "to_element": to_element}
                  if from_element is not None and to_element is not None else None),
@@ -128,10 +150,14 @@ class _InputMixin:
     def scroll(self, *, direction: str, amount: int = 3, element: Optional[int] = None,
                x: Optional[int] = None, y: Optional[int] = None, modifiers: Optional[list[str]] = None,
                delivery_mode: Optional[str] = None, bring_to_front: bool = False) -> ActionResult:
-        refusal, args = self._target_args("scroll")
+        coords_only = element is None and x is not None and y is not None
+        refusal, args = self._target_args("scroll", desktop_tool="scroll" if coords_only else None)
         if refusal is not None:
             return refusal
         args.update(direction=direction, amount=max(1, min(50, amount)))
+        if "scope" in args:
+            args.update(x=x, y=y)
+            return self._run_input_action("scroll", args, delivery_mode, bring_to_front)
         # An element without a known window_id is not an addressing form here; scrolling then falls through
         # to the coordinate form or the bare window. Some driver schemas reject x/y on scroll: only send
         # coordinates when the driver advertises support; otherwise it scrolls the targeted window
@@ -146,15 +172,15 @@ class _InputMixin:
         return refusal if refusal is not None else self._run_input_action("scroll", args, delivery_mode, bring_to_front)
 
     def type_text(self, text: str, *, delivery_mode: Optional[str] = None, bring_to_front: bool = False) -> ActionResult:
-        refusal, args = self._target_args("type_text", need_window=True)
+        refusal, args = self._target_args("type_text", need_window=True, desktop_tool="type_text")
         return refusal if refusal is not None else self._run_input_action("type_text", {**args, "text": text},
                                                                           delivery_mode, bring_to_front)
 
     def key(self, keys: str, *, delivery_mode: Optional[str] = None, bring_to_front: bool = False) -> ActionResult:
-        refusal, args = self._target_args("key", need_window=True)
+        key_name, modifiers = _parse_key_combo(keys)
+        refusal, args = self._target_args("key", need_window=True, desktop_tool="hotkey" if modifiers else "press_key")
         if refusal is not None:
             return refusal
-        key_name, modifiers = _parse_key_combo(keys)
         if not key_name:
             return _refuse("key", f"Could not parse key from '{keys}'.")
         if modifiers:  # hotkey requires at least one modifier + one key
