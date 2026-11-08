@@ -159,10 +159,12 @@ def goal_tool(action: str, *, objective: str = "", evidence: str = "", max_turns
         gate_decision = mgr._check_gates()
         if gate_decision is not None:
             return tool_error(gate_decision["reason"], verdict=gate_decision["verdict"])
-        from hermes_cli.goals import judge_goal
+        from hermes_cli.goals import count_active_delegations, gather_background_processes, judge_goal
         verdict, reason, parse_failed, _wd, transport_failed = judge_goal(
             s.goal, f"Completion claim with evidence:\n{evidence}",
             subgoals=s.subgoals or None,
+            background_processes=gather_background_processes(owner_task_id=mgr.session_id),
+            active_delegations=count_active_delegations(mgr.session_id),
             contract=s.contract if s.has_contract() else None,
         )
         if parse_failed or transport_failed:

@@ -124,3 +124,78 @@ def test_complete_refuses_when_audit_rejects_required_subgoal(isolated_store, mo
     assert not result.get('completed'), result
     assert result['verdict'] == 'continue'
     assert persisted(isolated_store)['status'] == 'active'
+
+
+@pytest.mark.parametrize('pending', ['process', 'delegation'])
+def test_complete_observes_same_session_pending_work(isolated_store, monkeypatch, pending):
+    from tools import async_delegation as ad
+    from tools.process_registry import process_registry
+
+    mgr = create()
+    processes = [
+        {'session_id': 'proc_owned', 'owner_task_id': 'bound-session', 'status': 'running',
+         'pid': 12345, 'command': 'required-local-validation'},
+        {'session_id': 'proc_foreign', 'owner_task_id': 'foreign-session', 'status': 'running',
+         'pid': 12346, 'command': 'foreign-validation'},
+    ] if pending == 'process' else []
+    monkeypatch.setattr(process_registry, 'list_sessions', lambda **kw: processes)
+    monkeypatch.setattr(ad, '_records', {
+        'mine': {'status': 'running', 'parent_session_id': 'bound-session'},
+        'other': {'status': 'running', 'parent_session_id': 'foreign-session'},
+        'finished': {'status': 'completed', 'parent_session_id': 'bound-session'},
+    } if pending == 'delegation' else {})
+    prompts = []
+
+    def audit(_call_llm, _system_prompt, prompt, _timeout):
+        prompts.append(prompt)
+        if 'required-local-validation' in prompt or 'Active delegations' in prompt:
+            return '{"verdict":"continue","reason":"Required work is still running"}'
+        return '{"verdict":"done","reason":"The artifact is complete"}'
+
+    monkeypatch.setattr(goals, '_call_goal_judge_llm', audit)
+    native = mgr.evaluate_after_turn(
+        'The artifact is complete according to this claim',
+        background_processes=goals.gather_background_processes(owner_task_id='bound-session'),
+        active_delegations=goals.count_active_delegations('bound-session'),
+    )
+    assert native['verdict'] == 'continue'
+    assert 'foreign-validation' not in prompts[0]
+    result = call('complete', evidence='The artifact is complete according to this claim')
+    assert not result.get('completed'), result
+    assert result['verdict'] == 'continue'
+    assert persisted(isolated_store)['status'] == 'active'
+    if pending == 'process':
+        assert 'required-local-validation' in prompts[1]
+        assert 'foreign-validation' not in prompts[1]
+    else:
+        assert 'has 1 delegated subagent batch(es)' in prompts[1]
+
+
+def test_complete_ignores_foreign_and_finished_work(isolated_store, monkeypatch):
+    from tools import async_delegation as ad
+    from tools.process_registry import process_registry
+
+    create()
+    monkeypatch.setattr(process_registry, 'list_sessions', lambda **kw: [
+        {'session_id': 'proc_foreign', 'owner_task_id': 'foreign-session', 'status': 'running',
+         'pid': 12346, 'command': 'foreign-validation'},
+        {'session_id': 'proc_finished', 'owner_task_id': 'bound-session', 'status': 'exited',
+         'pid': 12345, 'command': 'finished-validation'},
+    ])
+    monkeypatch.setattr(ad, '_records', {
+        'other': {'status': 'running', 'parent_session_id': 'foreign-session'},
+        'finished': {'status': 'completed', 'parent_session_id': 'bound-session'},
+    })
+    prompts = []
+
+    def audit(_call_llm, _system_prompt, prompt, _timeout):
+        prompts.append(prompt)
+        return '{"verdict":"done","reason":"Required work is complete"}'
+
+    monkeypatch.setattr(goals, '_call_goal_judge_llm', audit)
+    assert call('complete', evidence='The artifact has passed the required local checks')['completed']
+    assert persisted(isolated_store)['status'] == 'done'
+    assert len(prompts) == 1
+    assert 'foreign-validation' not in prompts[0]
+    assert 'finished-validation' not in prompts[0]
+    assert 'Active delegations' not in prompts[0]
