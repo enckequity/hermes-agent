@@ -1151,7 +1151,14 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
         return bool(self.supports_inchannel_continuable)
 
     async def on_interrupt(self, session_key: str, chat_id: str) -> None:
-        """Bridge a connector-delivered /stop into the per-session interrupt path."""
+        """Bridge a connector-delivered interrupt: stop the running turn, keep queued follow-ups.
+
+        ``interrupt_session_activity`` only clears typing and sets the session event; the runner's sync
+        core is what actually interrupts the agent. Nothing is discarded or sent, so queued FIFO
+        admissions still run once the interrupted turn unwinds."""
+        stop = getattr(self.gateway_runner, "interrupt_turn_keep_queue", None)
+        if callable(stop):
+            stop(session_key, platform=self.platform.value, reason="Relay interrupt")
         await self.interrupt_session_activity(session_key, chat_id)
 
     async def disconnect(self) -> None:

@@ -541,18 +541,10 @@ class GatewayAgentCacheMixin:
             ).start()
         return _generation_at_interrupt
 
-    async def _interrupt_and_clear_session(
-        self, session_key: str, source: SessionSource, *, interrupt_reason: str,
-        invalidation_reason: str, release_running_state: bool = True,
+    def _notify_turn_interrupted(
+        self, session_key: str, running_agent: Any, *, platform: str, interrupt_reason: str, invalidation_reason: str,
     ) -> None:
-        """Interrupt the current run and clear queued session state consistently."""
-        if not session_key:
-            return
-        state = self._peek_session_state(session_key)
-        running_agent = state.turn.agent if state else None
-        _generation_at_interrupt = self._interrupt_running_turn(
-            session_key, interrupt_reason=interrupt_reason, invalidation_reason=invalidation_reason,
-        )
+        """What follows a hard interrupt of *running_agent*: detached delegations and plugins learn the turn is gone."""
         from gateway.run import _AGENT_PENDING_SENTINEL
         # The turn's hard interrupt reaches only its in-turn children; background delegations were
         # detached at dispatch and would otherwise run to completion and wake the session later.
@@ -572,12 +564,39 @@ class GatewayAgentCacheMixin:
                 _invoke_hook(
                     "agent_loop_stopped",
                     session_key=session_key,
-                    platform=source.platform.value if source.platform else "",
+                    platform=platform,
                     reason=interrupt_reason,
                     invalidation_reason=invalidation_reason,
                 )
             except Exception:
                 logger.debug("agent_loop_stopped hook dispatch failed", exc_info=True)
+
+    def interrupt_turn_keep_queue(self, session_key: str, *, platform: str, reason: str) -> None:
+        """Stop the running turn like /stop but leave queued follow-ups and the turn slot alone and send
+        no reply: the interrupted turn releases its own slot as it unwinds and the queue then drains."""
+        if not session_key:
+            return
+        state = self._peek_session_state(session_key)
+        running_agent = state.turn.agent if state else None
+        self._interrupt_running_turn(session_key, interrupt_reason=reason, invalidation_reason=reason)
+        self._notify_turn_interrupted(
+            session_key, running_agent, platform=platform, interrupt_reason=reason, invalidation_reason=reason)
+
+    async def _interrupt_and_clear_session(
+        self, session_key: str, source: SessionSource, *, interrupt_reason: str,
+        invalidation_reason: str, release_running_state: bool = True,
+    ) -> None:
+        """Interrupt the current run and clear queued session state consistently."""
+        if not session_key:
+            return
+        state = self._peek_session_state(session_key)
+        running_agent = state.turn.agent if state else None
+        _generation_at_interrupt = self._interrupt_running_turn(
+            session_key, interrupt_reason=interrupt_reason, invalidation_reason=invalidation_reason,
+        )
+        self._notify_turn_interrupted(
+            session_key, running_agent, platform=source.platform.value if source.platform else "",
+            interrupt_reason=interrupt_reason, invalidation_reason=invalidation_reason)
         adapter = self._delivery_adapter_for(source)
         interrupt_session_activity = getattr(type(adapter), "interrupt_session_activity", None)
         if adapter and callable(interrupt_session_activity):
