@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from gateway import lifecycle_ledger
 from gateway.lifecycle_ledger import (
     detect_unclean_exit,
     get_lifecycle_sentinel_path,
@@ -73,6 +74,34 @@ def test_sample_memory_has_expected_keys_on_linux() -> None:
     assert sample.get("rss_kib", 0) > 0
     assert sample.get("mem_total_kib", 0) > 0
     assert "mem_available_kib" in sample
+
+
+def _cgroup(root: Path, max_: str, current: int, inactive_file: int) -> Path:
+    root.mkdir()
+    (root / "memory.max").write_text(max_ + "\n")
+    (root / "memory.current").write_text(f"{current}\n")
+    (root / "memory.stat").write_text(f"anon 1\ninactive_file {inactive_file}\nactive_file 2\n")
+    return root
+
+
+@pytest.mark.platforms("linux")
+def test_sample_memory_clamps_to_container_cgroup_limit(tmp_path: Path, monkeypatch) -> None:
+    gib = 1024 ** 3
+    root = _cgroup(tmp_path / "cg", str(3 * gib), current=2 * gib, inactive_file=gib // 2)
+    monkeypatch.setattr(lifecycle_ledger, "CGROUP_ROOT", str(root))
+    host = lifecycle_ledger._proc_fields("/proc/meminfo", {"MemTotal": "t", "MemAvailable": "a"})
+    if host["t"] <= 3 * gib // 1024:
+        pytest.skip("host is not larger than the fixture limit")
+    sample = sample_memory()
+    assert sample["mem_total_kib"] == 3 * gib // 1024
+    assert sample["mem_available_kib"] == min(host["a"], (gib + gib // 2) // 1024)
+
+
+def test_cgroup_memory_unlimited_or_missing_is_ignored(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(lifecycle_ledger, "CGROUP_ROOT", str(_cgroup(tmp_path / "cg", "max", 1, 0)))
+    assert lifecycle_ledger._cgroup_memory_kib() is None
+    monkeypatch.setattr(lifecycle_ledger, "CGROUP_ROOT", str(tmp_path / "absent"))
+    assert lifecycle_ledger._cgroup_memory_kib() is None
 
 
 # ---------------------------------------------------------------------------

@@ -61,13 +61,53 @@ def _proc_fields(path: str, wanted: dict[str, str]) -> dict[str, int]:
     return found
 
 
+# cgroup v2 mount; module-level so tests can point it at a fixture directory.
+CGROUP_ROOT = "/sys/fs/cgroup"
+
+
+def _cgroup_memory_kib() -> Optional[tuple[int, int]]:
+    """``(limit_kib, available_kib)`` from this process's cgroup v2 memory limit, or None.
+
+    Inside a container /proc/meminfo reports the HOST, so a 3 GiB container on an 8 GiB VM
+    would size and pressure-check its workers against 8 GiB and be OOM-killed first.
+    Reclaimable page cache (inactive_file) counts as available, matching MemAvailable.
+    """
+    try:
+        with open(f"{CGROUP_ROOT}/memory.max", encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if raw == "max":
+            return None
+        limit = int(raw)
+        with open(f"{CGROUP_ROOT}/memory.current", encoding="utf-8") as fh:
+            current = int(fh.read().strip())
+        inactive_file = 0
+        with open(f"{CGROUP_ROOT}/memory.stat", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("inactive_file "):
+                    inactive_file = int(line.split()[1])
+                    break
+    except (OSError, ValueError, IndexError):
+        return None
+    if limit <= 0:
+        return None
+    return limit // 1024, max(0, limit - current + inactive_file) // 1024
+
+
 def sample_memory() -> dict[str, Any]:
     """Cheap /proc snapshot (KiB): own RSS + MemTotal/MemAvailable + swap used.  Linux-only
-    (``{}`` elsewhere), never raises; the 30s heartbeat embeds it so OOM cycles are classifiable."""
+    (``{}`` elsewhere), never raises; the 30s heartbeat embeds it so OOM cycles are classifiable.
+    A cgroup v2 memory limit tighter than the host clamps MemTotal/MemAvailable to the container."""
     sample = _proc_fields("/proc/self/status", {"VmRSS": "rss_kib"})
     mem = _proc_fields("/proc/meminfo", {"MemTotal": "mem_total_kib", "MemAvailable": "mem_available_kib",
                                          "SwapTotal": "SwapTotal", "SwapFree": "SwapFree"})
     swap_total, swap_free = mem.pop("SwapTotal", None), mem.pop("SwapFree", None)
+    cgroup = _cgroup_memory_kib() if "mem_total_kib" in mem else None
+    if cgroup is not None:
+        limit_kib, available_kib = cgroup
+        if limit_kib < mem["mem_total_kib"]:
+            mem["mem_total_kib"] = limit_kib
+            if "mem_available_kib" in mem:
+                mem["mem_available_kib"] = min(mem["mem_available_kib"], available_kib)
     sample.update(mem)
     if swap_total is not None and swap_free is not None:
         sample["swap_used_kib"] = swap_total - swap_free
