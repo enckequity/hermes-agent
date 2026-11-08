@@ -1234,8 +1234,12 @@ class GatewayBusySessionMixin:
         _steer_state = self._peek_session_state(quick_key)
         running_agent = _steer_state.turn.agent if _steer_state else None
 
+        # Silent steering (busy_steer_ack_enabled=false): the steer still lands, only the bubble is dropped.
+        ack_enabled = self._busy_steer_ack_enabled(event, quick_key)
+
         async def _queue_fallback(reply: str) -> Optional[str]:
             # Turn-boundary fallback: queue the steer text as its own follow-up turn.
+            reply = reply if ack_enabled else None
             adapter = self._delivery_adapter_for(source)
             if adapter and await self._queue_command_turn(quick_key, event, MessageEvent(
                 text=steer_text, message_type=MessageType.TEXT, source=event.source,
@@ -1264,7 +1268,7 @@ class GatewayBusySessionMixin:
         preview = steer_text[:60] + ("..." if len(steer_text) > 60 else "")
         target = (t("gateway.steer.target_subagents") if self._agent_has_active_subagents(running_agent)
                   else t("gateway.steer.target_run"))
-        return t("gateway.steer.queued", target=target, preview=preview)
+        return t("gateway.steer.queued", target=target, preview=preview) if ack_enabled else None
 
     # A slash command that becomes a turn (``/queue``, the ``/steer`` fallback, ``/plan``, ``/learn``,
     # a skill or bundle) joins the routed session authority's durable FIFO exactly like text, so it

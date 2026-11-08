@@ -177,3 +177,33 @@ async def test_steer_agent_without_steer_method_falls_back():
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+async def test_steer_command_sends_no_ack_when_busy_steer_ack_disabled(monkeypatch):
+    """busy_steer_ack_enabled=false silences the /steer confirmation too; the steer still lands."""
+    monkeypatch.setenv("HERMES_GATEWAY_BUSY_STEER_ACK_ENABLED", "false")
+    runner, adapter = _make_runner(_session_entry())
+    sk = build_session_key(_make_source())
+    running_agent = MagicMock()
+    running_agent.steer.return_value = True
+    runner._running_agents[sk] = running_agent
+
+    result = await runner._handle_message(_make_event("/steer also check auth.log"))
+
+    assert result is None
+    running_agent.steer.assert_called_once()
+    running_agent.interrupt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_steer_command_fallback_still_queues_without_ack_when_disabled(monkeypatch):
+    monkeypatch.setenv("HERMES_GATEWAY_BUSY_STEER_ACK_ENABLED", "false")
+    runner, adapter = _make_runner(_session_entry())
+    sk = build_session_key(_make_source())
+    runner._running_agents[sk] = MagicMock(spec=[])  # no steer(): turn-boundary fallback
+
+    result = await runner._handle_message(_make_event("/steer fallback"))
+
+    assert result is None
+    assert adapter._pending_messages[sk].text == "fallback"
