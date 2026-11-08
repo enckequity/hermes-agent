@@ -658,16 +658,21 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
             return  # Best-effort: a failed carry falls back to the publish-time stamp, never breaks publish.
 
     def _insert_message_rows(self, conn, session_id: str, messages: list[dict[str, Any]], *,
-                             prune_checkpoints: bool = True) -> tuple[int, int]:
+                             prune_checkpoints: bool = True, strip_user_timestamps: bool = False) -> tuple[int, int]:
         """Insert *messages* as fresh active rows in the caller's txn -> ``(inserted, tool_call_count)``.
         Never touches sessions.* counters (callers reconcile differently); reasoning kept for assistant rows.
         A caller that re-archives some rows afterwards passes ``prune_checkpoints=False`` and prunes once they
-        are archived again (:meth:`_prune_shadowed_checkpoints`)."""
+        are archived again (:meth:`_prune_shadowed_checkpoints`). ``strip_user_timestamps`` (compaction) drops the
+        replay-only ``[Tue 2026-04-28 13:40:53 UTC]`` prefix a gateway renders onto user text, in the live dict too so
+        it stays equal to its stored row; persisted content stays clean."""
         now_ts = time.time()
         inserted = tool_calls_total = 0
         batch_tool_index: dict[str, str] = {}
         for msg in messages:
             role = msg.get("role", "unknown")
+            if strip_user_timestamps and role == "user" and isinstance(msg.get("content"), str):
+                from gateway.message_timestamps import strip_leading_message_timestamps
+                msg["content"] = strip_leading_message_timestamps(msg["content"])[0]
             tool_calls = _parse_tool_calls(msg.get("tool_calls"))
             message_timestamp = _coerce_timestamp(msg.get("timestamp"), now_ts)
             # The durable per-message id: kept when the dict carries one (a copy of an already-stored
@@ -888,7 +893,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         # durable row's timestamp so display dedupe still collapses generations. Donors are active-only;
         # the rewound/archived originals above never donate, so this is a no-op for a clean compaction.
         self._carry_parent_timestamps(conn, session_id, compacted_messages)
-        inserted, tool_calls_total = self._insert_message_rows(conn, session_id, compacted_messages)
+        inserted, tool_calls_total = self._insert_message_rows(
+            conn, session_id, compacted_messages, strip_user_timestamps=True)
         if clone_ids:
             _ids, unseen_tool_calls = self._tail_rows_after_watermark(
                 conn,
@@ -1023,7 +1029,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         # durable row's timestamp so display dedupe still collapses generations. Donors are active-only;
         # the rewound/archived originals above never donate, so this is a no-op for a clean compaction.
         self._carry_parent_timestamps(conn, session_id, compacted_messages)
-        inserted, tool_calls_total = self._insert_message_rows(conn, session_id, compacted_messages)
+        inserted, tool_calls_total = self._insert_message_rows(
+            conn, session_id, compacted_messages, strip_user_timestamps=True)
         if clone_ids:
             self._clone_message_rows(conn, clone_ids)
             inserted += len(clone_ids)
