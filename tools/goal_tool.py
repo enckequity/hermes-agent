@@ -151,10 +151,18 @@ def goal_tool(action: str, *, objective: str = "", evidence: str = "", max_turns
         evidence = (evidence or "").strip()
         if len(evidence) < _MIN_OBJECTIVE_CHARS:
             return tool_error("complete needs evidence that the outcome exists")
-        from hermes_cli.goals import judge_goal
         s = mgr.state
+        if s.status != "active":
+            return tool_error("goal is paused; resume it before claiming completion")
+        if mgr.is_waiting():
+            return tool_error("goal is waiting for a prerequisite; completion audit deferred")
+        gate_decision = mgr._check_gates()
+        if gate_decision is not None:
+            return tool_error(gate_decision["reason"], verdict=gate_decision["verdict"])
+        from hermes_cli.goals import judge_goal
         verdict, reason, parse_failed, _wd, transport_failed = judge_goal(
             s.goal, f"Completion claim with evidence:\n{evidence}",
+            subgoals=s.subgoals or None,
             contract=s.contract if s.has_contract() else None,
         )
         if parse_failed or transport_failed:
