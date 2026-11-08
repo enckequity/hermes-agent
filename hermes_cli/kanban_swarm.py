@@ -103,11 +103,16 @@ def create_swarm(
     verifier_assignee = _require_text(verifier_assignee, "verifier_assignee")
     synthesizer_assignee = _require_text(synthesizer_assignee, "synthesizer_assignee")
     worker_specs = list(workers)
+    max_runtime_seconds = 600 if max_runtime_seconds is None else max_runtime_seconds
     if not worker_specs:
         raise ValueError("at least one worker is required")
     for i, spec in enumerate(worker_specs, start=1):
         _require_text(spec.profile, f"workers[{i}].profile")
         _require_text(spec.title, f"workers[{i}].title")
+
+    for runtime in [max_runtime_seconds, *(spec.max_runtime_seconds for spec in worker_specs)]:
+        if runtime is not None and (type(runtime) is not int or not 0 < runtime <= 2**63 - 1):
+            raise ValueError("max_runtime_seconds must be a positive SQLite integer")
 
     root = kb.create_task(
         conn,
@@ -170,7 +175,7 @@ def create_swarm(
             workspace_kind=workspace_kind,
             workspace_path=workspace_path,
             skills=spec.skills or None,
-            max_runtime_seconds=spec.max_runtime_seconds or max_runtime_seconds,
+            max_runtime_seconds=spec.max_runtime_seconds if spec.max_runtime_seconds is not None else max_runtime_seconds,
         )
         worker_ids.append(worker_id)
 
