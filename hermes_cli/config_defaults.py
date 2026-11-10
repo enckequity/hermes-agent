@@ -2710,7 +2710,7 @@ DEFAULT_CONFIG = {
 }
 
 
-from hermes_cli.config_defaults_env import AGENT_SETTING_ENV_VARS, OptionalEnvVars, _base_url, _env, _msg, _prov, _setting, _skill, _tool
+from hermes_cli.config_defaults_env import AGENT_SETTING_ENV_VARS, OptionalEnvVars, _base_url, _env, _msg, _prov, _skill, _tool
 
 
 # Optional environment variables that enhance functionality. Feeds the dashboard keys page and setup
