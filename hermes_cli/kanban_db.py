@@ -560,6 +560,33 @@ def _board_path(
     return board_dir(slug) / leaf
 
 
+def assert_explicit_board_matches_pin(board: Optional[str] = None) -> None:
+    """Fail closed when a fenced worker names a board its pin does not serve.
+
+    Inside a dispatched worker or delegated child, :func:`_board_path` keeps
+    resolving an explicit ``board=`` / scoped ``--board`` through the
+    ``HERMES_KANBAN_DB`` pin (the isolation fence). That must not turn a
+    different or nonexistent board into a silent write on the pinned board
+    (#1198): raise before any read/write instead. The pinned DB path is the
+    authority; the mutable ``current`` file / ``HERMES_KANBAN_BOARD`` are not
+    consulted. Same-board and board-less calls, unfenced callers, and machine
+    flows under :func:`pin_first_board_resolution` are unchanged."""
+    pin = os.environ.get("HERMES_KANBAN_DB", "").strip()
+    if not pin or _PIN_FIRST_BOARD_RESOLUTION.get():
+        return
+    slug = _explicit_board_slug(board)
+    if slug is None or not _explicit_board_intent_pinned():
+        return
+    own = (kanban_home() / "kanban.db") if slug == DEFAULT_BOARD else board_dir(slug) / "kanban.db"
+    if board_exists(slug) and own.expanduser().resolve() == Path(pin).expanduser().resolve():
+        return
+    raise ValueError(
+        f"board {slug!r} is not the board this worker is pinned to "
+        f"(HERMES_KANBAN_DB); workers cannot read or write other boards. "
+        f"Omit board= to use the pinned board. Nothing changed."
+    )
+
+
 def kanban_db_path(board: Optional[str] = None) -> Path:
     """``kanban.db`` path: ``HERMES_KANBAN_DB`` pins it (injected into workers);
     ``default`` -> ``<root>/kanban.db`` (back-compat), else the board dir."""
