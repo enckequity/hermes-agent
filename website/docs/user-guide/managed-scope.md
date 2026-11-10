@@ -95,6 +95,51 @@ When the managed `config.yaml` pins a non-empty `terminal.backend`, a profile
 passes the keys as environment) loads as absent with a warning; without that
 pin the read error still stops Hermes.
 
+## Profile approval modes
+
+An administrator can select a different approval mode for a native profile while
+keeping the global mode for other profiles. This table is read only from the
+managed `config.yaml`:
+
+```yaml
+approvals:
+  mode: off
+  profile_modes:
+    default: manual
+```
+
+Here the default profile uses `manual`; named worker profiles retain `off`.
+Values are `manual`, `smart` or `off` (quote `off` if desired). Keys must be
+canonical lowercase profile names. The selected value becomes the profile's
+managed `approvals.mode`, so normal config set/unset cannot change it. A table
+in user configuration has no authority. Other approval settings remain unchanged.
+
+Selection follows the existing native runtime home context, including multiplexed
+turns. It ignores `HERMES_PROFILE_NAME` and the sticky active-profile selection.
+Unknown homes retain the global mode. A profile named `custom` is selected only
+when the runtime home matches that profile's canonical directory. This mechanism
+does not add profile or OS isolation beyond the existing trusted runtime and
+administrator-controlled filesystem boundary.
+
+Managed file edits are read on the next config load, including frozen worker
+snapshots and last-known-good recovery after malformed user YAML. A successfully
+parsed but invalid `profile_modes` table raises `ManagedProfilePolicyError`.
+The existing whole-managed-file failure behavior remains: unreadable files or
+malformed YAML are logged and ignored. Administrators must parse and validate
+the deployed file and read effective modes back before activating a transport.
+
+This selects effective profile configuration. In Group Chats, inherited room
+policy can still override a routed target's mode when the `advanced-delegation`
+plugin uses its `profile_routes` backend. See [upstream issue #143399](https://github.com/NousResearch/hermes-agent/issues/143399).
+Do not activate that combination until the native bug is fixed. Before activation,
+check the actual enabled plugins, configured backend and active session backend;
+an existing session may retain the backend its tools were built with.
+
+Native yolo, existing session grants and other approval bypass semantics remain
+unchanged. This does not impose mandatory approval on those paths. Before testing
+a manual approval, verify yolo is off and use a fresh session without an existing
+grant.
+
 ## Seeing what's managed
 
 ```bash

@@ -44,6 +44,7 @@ from agent.message_metadata import ABSORBED_MESSAGE_UIDS, MESSAGE_UID, copy_iden
 from agent.turn_context import compression_made_progress
 from agent.session_activity import ActivityProvenance, AwakeIdleMeter
 from hermes_cli.config import _is_ssh_remote_tilde_cwd, cfg_get, config_exists
+from hermes_cli.managed_scope import ManagedProfilePolicyError
 from gateway.run_common import _csv_or_list_to_set
 from hermes_cli.fallback_config import pre_agent_fallback_notice
 from gateway.turn_executor import _UnboundedThreadExecutor
@@ -1843,13 +1844,7 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     named launcher when a profile-scoped process started the host. A scope miss must not fall
     through to that process's ``os.environ``. Off -> identical to ``load_gateway_config()``.
 
-    See #64674.
-
-    The probe load above only decides whether this process is a multiplexer. The primary
-    config is the scoped reload: multiplex must already be active (a scope miss must not
-    fall through to the launching profile's ``os.environ``) and the home must be the
-    default root, not ``get_hermes_home()`` — a named launcher's home is not the owner
-    of the primary adapter map.
+    See #64674; the scoped reload owns the primary adapter map.
     """
     from hermes_cli.gateway_multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
     cfg = load_gateway_config()
@@ -1869,6 +1864,8 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     try:
         with _profile_runtime_scope(Path(home)):
             scoped = load_gateway_config()
+    except ManagedProfilePolicyError:
+        raise
     except Exception:
         logger.debug("multiplex default-scope config reload failed; using unscoped load", exc_info=True)
         return cfg
@@ -2107,13 +2104,12 @@ def _bridge_config_to_env(_cfg: dict) -> None:
 
 
 def _load_bridge_config(config_path: Path) -> dict:
-    """Effective USER config (no defaults) for the presence-sensitive env bridge: only keys the user
-    or the managed layer wrote get bridged, else all of DEFAULT_CONFIG would be exported. A bypass
-    worker bridges its frozen explicit snapshot instead: the profile file is exactly what it must not read."""
+    """Bridge explicit user/managed keys, or a worker's frozen snapshot with current managed policy."""
     from agent.safe_worker_policy import worker_config_snapshot
     snapshot = worker_config_snapshot()
     if snapshot is not None:
-        return snapshot
+        from hermes_cli.managed_scope import apply_managed_overlay
+        return apply_managed_overlay(snapshot)
     from hermes_cli.config_effective import load_user_config_effective
     return load_user_config_effective(config_path)
 
@@ -2124,6 +2120,8 @@ if config_exists(_config_path):
     try:
         _cfg = _load_bridge_config(_config_path)
         _bridge_config_to_env(_cfg)
+    except ManagedProfilePolicyError:
+        raise
     except Exception as _bridge_err:
         # stderr, not logger: the module logger is not initialized yet at import time.
         print(
@@ -2870,14 +2868,16 @@ def _gateway_config_home() -> Path:
 
 def _load_gateway_config(config_path: Path | None = None) -> dict:
     """The effective user config.yaml (managed overlay, ``${VAR}`` expansion, model-key canon; no
-    DEFAULT_CONFIG merge) — ``{}`` on any error (fail-open). Defaults to the active gateway home
-    (``_hermes_home`` monkeypatches apply); multiplexers pass a path.
+    DEFAULT_CONFIG merge). Invalid parsed managed profile policy raises; other errors return {}.
+    Defaults to the active gateway home; multiplexers may pass a path.
     """
     if config_path is None:
         config_path = _gateway_config_home() / 'config.yaml'
     try:
         from hermes_cli.config_effective import load_user_config_effective
         return load_user_config_effective(config_path)
+    except ManagedProfilePolicyError:
+        raise
     except Exception:
         logger.debug("Could not load gateway config from %s", config_path, exc_info=True)
         return {}

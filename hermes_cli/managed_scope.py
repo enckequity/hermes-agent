@@ -104,6 +104,38 @@ def _load_managed_file(name: str, cache: dict[str, tuple], parse) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+class ManagedProfilePolicyError(ValueError):
+    """A parsed administrator profile approval policy is invalid."""
+
+
+def _profile_approval_mode(config: dict) -> dict:
+    """Resolve admin-only mode metadata through the native runtime profile scope."""
+    approvals = config.get("approvals")
+    if not isinstance(approvals, dict) or "profile_modes" not in approvals:
+        return config
+    from hermes_constants import PROFILE_ID_RE
+    from hermes_cli.profiles import get_active_profile_name, profile_matches_home
+
+    modes = approvals.pop("profile_modes")
+    if not isinstance(modes, dict):
+        raise ManagedProfilePolicyError("Managed approvals.profile_modes must be a mapping.")
+    normalized = {}
+    for name, value in modes.items():
+        if not isinstance(name, str) or not PROFILE_ID_RE.fullmatch(name):
+            raise ManagedProfilePolicyError("Managed approvals.profile_modes requires canonical profile names.")
+        # YAML 1.1 reads unquoted off as False, as it does for approvals.mode.
+        value = "off" if value is False else value
+        if not isinstance(value, str) or value not in {"manual", "smart", "off"}:
+            raise ManagedProfilePolicyError("Managed profile approval modes must be manual, smart or off.")
+        normalized[name] = value
+    name = get_active_profile_name()
+    # 'custom' also names an unknown-home sentinel. Only its canonical profile directory
+    # qualifies; neither a launch-name env pin nor the sticky selection is authoritative.
+    if name in normalized and profile_matches_home(name):
+        approvals["mode"] = normalized[name]
+    return config
+
+
 def load_managed_config() -> dict:
     """Parsed managed config.yaml, or {} when absent/malformed (fail-open). Always {} under a config
     backend that takes config and locks from elsewhere (remote mode, D18; boot warns about the file)."""
@@ -111,7 +143,10 @@ def load_managed_config() -> dict:
 
     if not get_config_backend().honors_managed_config():
         return {}
-    return _load_managed_file("config.yaml", _CONFIG_CACHE, lambda p: fast_safe_load(p.read_text(encoding="utf-8-sig")) or {})
+    parsed = _load_managed_file("config.yaml", _CONFIG_CACHE, lambda p: fast_safe_load(p.read_text(encoding="utf-8-sig")) or {})
+    # Validate after the legacy reader: whole-file YAML/read errors retain its fail-open
+    # behavior, while invalid parsed profile policy must reach every consumer as an error.
+    return _profile_approval_mode(parsed)
 
 
 def load_managed_env() -> dict[str, str]:
@@ -149,6 +184,8 @@ def apply_managed_overlay(config: dict) -> dict:
             managed_expanded = dict(managed_expanded)
             managed_expanded["model"] = {"default": managed_expanded["model"]}
         return _deep_merge(config, managed_expanded)
+    except ManagedProfilePolicyError:
+        raise
     except Exception:
         logger.warning("managed scope: failed to apply config overlay", exc_info=True)
         return config
