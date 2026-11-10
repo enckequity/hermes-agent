@@ -204,6 +204,64 @@ def test_invalid_policy_reaches_actual_approval_gate(policy_homes, monkeypatch):
         approval.request_tool_approval("terminal", "Read-only approval test")
 
 
+def test_invalid_policy_reaches_gateway_entrypoints_and_roomlink(policy_homes):
+    _, managed = policy_homes
+    from gateway.config import load_gateway_config
+    from gateway.hosted_room_execution_policy import execution_policy_mapping
+    from gateway.run import _load_gateway_config, load_gateway_config_for_runner
+    from hermes_cli.managed_scope import ManagedProfilePolicyError
+    write_policy(managed, "{default: nope}")
+    for load in (load_gateway_config, _load_gateway_config, load_gateway_config_for_runner,
+                 lambda: execution_policy_mapping(target_profile="default")):
+        with pytest.raises(ManagedProfilePolicyError):
+            load()
+
+
+def test_runner_scoped_reload_propagates_policy_error(policy_homes, monkeypatch):
+    _, managed = policy_homes
+    write_policy(managed)
+    from gateway import run
+    from hermes_cli.managed_scope import ManagedProfilePolicyError
+    cfg = run.load_gateway_config()
+    cfg.multiplex_profiles = True
+    calls = []
+
+    def load():
+        calls.append(True)
+        if len(calls) == 1:
+            return cfg
+        raise ManagedProfilePolicyError("Invalid scoped policy")
+
+    monkeypatch.setattr(run, "load_gateway_config", load)
+    with pytest.raises(ManagedProfilePolicyError):
+        run.load_gateway_config_for_runner()
+
+
+def test_gateway_import_rejects_invalid_managed_policy(policy_homes):
+    import subprocess
+    import sys
+    _, managed = policy_homes
+    write_policy(managed, "{default: nope}")
+    result = subprocess.run([sys.executable, "-B", "-c", "import gateway.run"],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert "ManagedProfilePolicyError" in result.stderr
+    assert "Gateway will fall back" not in result.stderr
+
+
+def test_bridge_snapshot_reapplies_current_managed_policy(policy_homes, monkeypatch):
+    home, managed = policy_homes
+    from gateway.run import _load_bridge_config
+    from hermes_cli.managed_scope import ManagedProfilePolicyError
+    monkeypatch.setattr("agent.safe_worker_policy.worker_config_snapshot",
+                        lambda: {"approvals": {"mode": "off"}})
+    write_policy(managed)
+    assert _load_bridge_config(home / "config.yaml")["approvals"]["mode"] == "manual"
+    write_policy(managed, "{default: nope}")
+    with pytest.raises(ManagedProfilePolicyError):
+        _load_bridge_config(home / "config.yaml")
+
+
 def test_existing_yolo_bypass_is_unchanged(policy_homes, monkeypatch):
     _, managed = policy_homes
     write_policy(managed)
