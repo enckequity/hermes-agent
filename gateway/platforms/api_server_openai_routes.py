@@ -866,8 +866,9 @@ class OpenAICompatRoutesMixin:
         """POST /v1/chat/completions — OpenAI Chat Completions format."""
         from gateway.platforms.api_server import (
             ThreadSafeAsyncQueue, _api_request_profile, _chat_usage_payload, _coerce_request_bool,
-            _content_has_visible_payload, _derive_chat_session_id, _error_response, _invalid_request,
+            _content_has_visible_payload, _error_response, _invalid_request,
             _openai_error, _redact_api_error_text, _resolve_media_to_data_urls)
+        from gateway.platforms.api_server_profile_prefix import _derive_chat_session_id
         # Bound total in-flight agent runs (configurable; #7483).
         limited = self._concurrency_limited_response()
         if limited is not None:

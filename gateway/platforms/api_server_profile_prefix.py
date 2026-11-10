@@ -1,6 +1,7 @@
 """``/p/<profile>/`` prefix resolution for the shared api_server listener."""
+import hashlib
 import logging
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -74,3 +75,29 @@ def resolve_request_profile(adapter: Any, request: Any):
     if alias and "default" in served and _handle_is_free():
         return "default"
     return _PROFILE_REJECTED
+
+
+def _names_launch_profile(profile: str) -> bool:
+    """True when a /p/<profile>/ prefix names the profile this process was LAUNCHED as: its
+    un-prefixed and prefixed requests are one profile and must key one session."""
+    try:
+        from hermes_cli.profiles import profile_matches_home
+        from hermes_constants import get_routing_process_hermes_home
+        return profile_matches_home(profile, home=get_routing_process_hermes_home())
+    except Exception:
+        return False
+
+
+def _derive_chat_session_id(system_prompt: Optional[str], first_user_message: str,
+                            profile: Optional[str] = None) -> str:
+    """Stable session id from the system prompt + first user message (constant across all
+    turns of an Open WebUI-style conversation), so one Hermes session/sandbox is reused.
+    A routed ``/p/<profile>/`` prefix namespaces the seed: the id keys process-wide state
+    (session store, per-session sandbox), so two profiles opening with identical text must not
+    collide (#123989). Default/standalone ids are unchanged so live conversations survive, and
+    the launch profile addressed through its own ``/p/<launch>/`` prefix keeps the un-prefixed id."""
+    seed = f"{system_prompt or ''}\n{first_user_message}"
+    if profile and profile != "default" and not _names_launch_profile(profile):
+        seed = f"{profile}\0{seed}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+    return f"api-{digest}"
