@@ -14,6 +14,8 @@ from mcp.shared.auth import OAuthMetadata
 from pydantic import AnyHttpUrl
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+# RFC 8628 answers are JSON, but some servers (GitHub) default to form encoding unless asked.
+JSON_ACCEPT = {"Accept": "application/json"}
 
 
 class DeviceOAuthMetadata(OAuthMetadata):
@@ -151,7 +153,7 @@ async def _authorize(client, provider, cfg):
     if context.client_metadata.scope:
         data["scope"] = context.client_metadata.scope
     data.update(google_offline_access_params(context))
-    data, headers = context.prepare_token_auth(data, {})
+    data, headers = context.prepare_token_auth(data, dict(JSON_ACCEPT))
     response = await client.post(str(context.oauth_metadata.device_authorization_endpoint), data=data, headers=headers)
     authorization = _payload(response, "Device authorization")
     for key in ("device_code", "user_code", "verification_uri"):
@@ -165,7 +167,7 @@ async def _authorize(client, provider, cfg):
           "  Waiting for approval...\n", file=sys.stderr, flush=True)
     token_data = {"client_id": context.client_info.client_id, "device_code": authorization["device_code"],
                   "grant_type": DEVICE_GRANT, "resource": resource}
-    token_data, headers = context.prepare_token_auth(token_data, {})
+    token_data, headers = context.prepare_token_auth(token_data, dict(JSON_ACCEPT))
     httpx = sdk_httpx()
     while True:
         remaining = deadline - time.monotonic()
@@ -181,17 +183,22 @@ async def _authorize(client, provider, cfg):
             interval *= 2
             continue
         if 200 <= response.status_code < 300:
-            from mcp.shared.auth import OAuthToken
-            tokens = OAuthToken.model_validate(_payload(response, "Device token"))
-            if not tokens.access_token:
-                raise RuntimeError("Device token response has no access token")
-            if tokens.scope is None:
-                tokens.scope = context.client_metadata.scope
-            return tokens
-        try:
-            error = response.json().get("error")
-        except (ValueError, AttributeError):
-            error = None
+            payload = _payload(response, "Device token")
+            # GitHub reports pending/denied polls as HTTP 200 with an "error" member.
+            error = payload.get("error")
+            if error is None:
+                from mcp.shared.auth import OAuthToken
+                tokens = OAuthToken.model_validate(payload)
+                if not tokens.access_token:
+                    raise RuntimeError("Device token response has no access token")
+                if tokens.scope is None:
+                    tokens.scope = context.client_metadata.scope
+                return tokens
+        else:
+            try:
+                error = response.json().get("error")
+            except (ValueError, AttributeError):
+                error = None
         if error == "authorization_pending":
             continue
         if error == "slow_down":
