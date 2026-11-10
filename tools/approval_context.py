@@ -283,9 +283,12 @@ def _normalize_approval_mode(mode) -> str:
 def _get_approval_config() -> dict:
     """Read the approvals config block: the LIVE config-cache sub-dict
     (load_config_readonly contract) — callers must not mutate it or any nested structure."""
+    from hermes_cli.managed_scope import ManagedProfilePolicyError
     try:
         from hermes_cli.config import load_config_readonly
         return load_config_readonly().get("approvals", {}) or {}
+    except ManagedProfilePolicyError:
+        raise
     except Exception as e:
         logger.warning("Failed to load approval config: %s", e)
         return {}

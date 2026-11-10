@@ -2110,7 +2110,7 @@ def apply_terminal_config_to_env(
 
 def _load_config_cache_sig(config_path: Path) -> tuple[Optional[tuple[Any, ...]], Optional[tuple[Any, ...]]]:
     """Return ``(user_sig, cache_sig)`` for ``_LOAD_CONFIG_CACHE`` (racy-clean guarded, see ``config_cache_version``).
-    The managed config file's signature is folded in (zeros = none) so editing it invalidates
+    Managed signature and runtime home are folded in so policy edits or profile switches invalidate
     the merged result. ``cache_sig`` is None only when neither file exists (nothing to cache on)."""
     try:
         user_sig: Optional[tuple[Any, ...]] = config_cache_version(config_path)
@@ -2123,7 +2123,7 @@ def _load_config_cache_sig(config_path: Path) -> tuple[Optional[tuple[Any, ...]]
         managed_sig = (0, 0, 0, 0, "")
     if user_sig is None and managed_sig == (0, 0, 0, 0, ""):
         return None, None
-    return user_sig, (*(user_sig or (0, 0, 0, 0, "")), *managed_sig)
+    return user_sig, (*(user_sig or (0, 0, 0, 0, "")), *managed_sig, str(get_hermes_home()))
 
 
 def _last_known_good_fallback(config_path: Path, path_key: str, cache_sig, exc: Exception) -> Optional[dict[str, Any]]:
@@ -2158,7 +2158,7 @@ def _last_known_good_fallback(config_path: Path, path_key: str, cache_sig, exc: 
         return None
     # save_config() stores the pre-expansion dict (templates preserved); the load path stores the
     # expanded one. Expand defensively — idempotent when already expanded.
-    lkg_copy = FailedConfigRead(_expand_env_vars(copy.deepcopy(lkg)), error=exc)
+    lkg_copy = FailedConfigRead(_merge_managed_overlay(_expand_env_vars(copy.deepcopy(lkg)))[0], error=exc)
     if cache_sig is not None:
         # Cache under the failed file's signature (empty env snapshot: always valid) so repeated
         # loads don't re-parse the fallback; fixing the file changes the signature and reloads
@@ -2215,7 +2215,7 @@ def _load_config_cache_hit(path_key: str, cache_sig: Any) -> Optional[dict[str, 
 def _load_config_impl(*, want_deepcopy: bool) -> dict[str, Any]:
     snapshot = _worker_config_snapshot()
     if snapshot is not None:
-        return _deep_merge(copy.deepcopy(DEFAULT_CONFIG), snapshot)
+        return _merge_managed_overlay(_deep_merge(copy.deepcopy(DEFAULT_CONFIG), snapshot))[0]
 
     # Lock-free fast path for cache hits — same publication contract as `_read_raw_config_impl`
     # above (whole-tuple replace, `_CONFIG_LOCK` only serializes rebuilds and writers). A hit costs
