@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import random
 import re
 import secrets
@@ -712,6 +713,33 @@ def _refuse_dead_board_resurrection(path: Path, board: Optional[str]) -> None:
         raise ValueError(f"kanban board {slug!r} does not exist; create it with `hermes kanban boards create {slug}`")
 
 
+def _assert_explicit_board_matches_pin(board: Optional[str] = None) -> None:
+    """Fail closed when a fenced worker names a board its pin does not serve.
+
+    Inside a dispatched worker or delegated child, :func:`kanban_db._board_path` keeps
+    resolving an explicit ``board=`` / scoped ``--board`` through the
+    ``HERMES_KANBAN_DB`` pin (the isolation fence). That must not turn a
+    different or nonexistent board into a silent write on the pinned board
+    (#1198): raise before any read/write instead. The pinned DB path is the
+    authority; the mutable ``current`` file / ``HERMES_KANBAN_BOARD`` are not
+    consulted. Same-board and board-less calls, unfenced callers, and machine
+    flows under :func:`kanban_db.pin_first_board_resolution` are unchanged."""
+    pin = os.environ.get("HERMES_KANBAN_DB", "").strip()
+    if not pin or _kb._PIN_FIRST_BOARD_RESOLUTION.get():
+        return
+    slug = _kb._explicit_board_slug(board)
+    if slug is None or not _kb._explicit_board_intent_pinned():
+        return
+    own = (_kb.kanban_home() / "kanban.db") if slug == _kb.DEFAULT_BOARD else _kb.board_dir(slug) / "kanban.db"
+    if _kb.board_exists(slug) and own.expanduser().resolve() == Path(pin).expanduser().resolve():
+        return
+    raise ValueError(
+        f"board {slug!r} is not the board this worker is pinned to "
+        f"(HERMES_KANBAN_DB); workers cannot read or write other boards. "
+        f"Omit board= to use the pinned board. Nothing changed."
+    )
+
+
 def connect(db_path: Optional[Path] = None, *, board: Optional[str] = None) -> sqlite3.Connection:
     """Open (and initialize if needed) the kanban DB. WAL is (re)enabled on
     every connection so a re-created file stays robust; the first connection
@@ -719,6 +747,8 @@ def connect(db_path: Optional[Path] = None, *, board: Optional[str] = None) -> s
     ``_INITIALIZED_PATHS``. Path: explicit ``db_path``, else ``board``, else
     :func:`kanban_db_path` (``HERMES_KANBAN_DB`` -> ``HERMES_KANBAN_BOARD`` ->
     ``<root>/kanban/current`` -> ``default``)."""
+    if db_path is None:
+        _assert_explicit_board_matches_pin(board)  # #1198: no silent pinned-board misroute
     path = db_path if db_path is not None else _kb.kanban_db_path(board=board)
     from agent.delegation_context import kanban_path_is_fenced
     if kanban_path_is_fenced(path):
