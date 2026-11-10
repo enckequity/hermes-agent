@@ -128,10 +128,17 @@ The existing whole-managed-file failure behavior remains: unreadable files or
 malformed YAML are logged and ignored. Administrators must parse and validate
 the deployed file and read effective modes back before activating a transport.
 
+This selects effective profile configuration. In Group Chats, inherited room
+policy can still override a routed target's mode when the `advanced-delegation`
+plugin uses its `profile_routes` backend. See [upstream issue #143399](https://github.com/NousResearch/hermes-agent/issues/143399).
+Do not activate that combination until the native bug is fixed. Before activation,
+check the actual enabled plugins, configured backend and active session backend;
+an existing session may retain the backend its tools were built with.
+
 Native yolo, existing session grants and other approval bypass semantics remain
-unchanged. This selects the effective mode; it does not impose mandatory approval
-on those paths. Before testing a manual approval, verify yolo is off and use a
-fresh session without an existing grant.
+unchanged. This does not impose mandatory approval on those paths. Before testing
+a manual approval, verify yolo is off and use a fresh session without an existing
+grant.
 
 ## Seeing what's managed
 
