@@ -912,6 +912,35 @@ class TestModelsEndpoint:
             assert data["data"][0]["owned_by"] == "hermes"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("source", ["config", "env"])
+    async def test_models_advertises_configured_public_owner(self, source, monkeypatch):
+        """#963: owned_by is optional public branding (config extra or env); routes keep truth."""
+        routes = {"fast": {"model": "openai/gpt-5", "provider": "openrouter"}}
+        extra: dict = {"model_name": "teamshift", "model_routes": routes}
+        if source == "config":
+            extra["model_owner"] = "acme"
+        else:
+            monkeypatch.setenv("API_SERVER_MODEL_OWNER", "acme")
+        adapter = APIServerAdapter(PlatformConfig(enabled=True, extra=extra))
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/v1/models")
+            assert resp.status == 200
+            data = (await resp.json())["data"]
+        assert [(m["id"], m["owned_by"], m["root"]) for m in data] == [
+            ("teamshift", "acme", "teamshift"), ("fast", "acme", "openai/gpt-5")]
+        assert adapter._model_routes == {"fast": {"model": "openai/gpt-5", "provider": "openrouter"}}
+
+    @pytest.mark.asyncio
+    async def test_blank_public_owner_keeps_hermes_default(self, monkeypatch):
+        monkeypatch.setenv("API_SERVER_MODEL_OWNER", "   ")
+        adapter = _make_adapter()
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            data = (await (await cli.get("/v1/models")).json())["data"]
+        assert data[0]["owned_by"] == "hermes"
+
+    @pytest.mark.asyncio
     async def test_models_returns_profile_name(self):
         """When running under a named profile, /v1/models advertises the profile name."""
         with patch("gateway.platforms.api_server.APIServerAdapter._resolve_model_name", return_value="lucas"):
@@ -2634,6 +2663,28 @@ class TestModelRoutesHandlers:
                 assert resp.status == 200
                 kwargs = mock_run.call_args.kwargs
                 assert kwargs.get("route") == {
+                    "model": "minimax/minimax-m1", "provider": "openrouter",
+                }
+
+    @pytest.mark.asyncio
+    async def test_public_owner_does_not_change_inference_route(self):
+        """#963: branding is discovery metadata only; the alias still routes to its upstream."""
+        routes = {"minimax-m2": {"model": "minimax/minimax-m1", "provider": "openrouter"}}
+        adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={
+            "model_routes": routes, "model_name": "teamshift", "model_owner": "acme"}))
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    {"final_response": "hi", "messages": [], "api_calls": 1},
+                    {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10},
+                )
+                resp = await cli.post("/v1/chat/completions", json={
+                    "model": "minimax-m2",
+                    "messages": [{"role": "user", "content": "hello"}],
+                })
+                assert resp.status == 200
+                assert mock_run.call_args.kwargs.get("route") == {
                     "model": "minimax/minimax-m1", "provider": "openrouter",
                 }
 

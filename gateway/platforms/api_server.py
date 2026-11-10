@@ -1060,6 +1060,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")))
         self._model_name: str = self._resolve_model_name(
             extra.get("model_name", _get_scoped_secret("API_SERVER_MODEL_NAME", "")))
+        # Optional public ``owned_by`` branding for /v1/models; Hermes default preserved.
+        self._model_owner: str = str(extra.get("model_owner", _get_scoped_secret("API_SERVER_MODEL_OWNER", "")) or "").strip() or "hermes"
         # alias (client "model") -> {model, provider?, api_key? (UPSTREAM, never logged), base_url?}
         self._model_routes: dict[str, dict[str, Any]] = self._parse_model_routes(extra.get("model_routes"))
         # Opt-in bare ``model`` passthrough on OpenAI-compatible surfaces (generic clients
@@ -2318,10 +2320,15 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         model only, never credentials). Under /p/<profile>/ the primary id follows that profile."""
         now = int(time.time())
         # The middleware already entered the profile scope, so get_active_profile_name() resolves.
-        model_name = self._resolve_model_name("") if _api_request_profile.get() else self._model_name
+        # Under /p/<profile>/ read that profile's own overrides (upstream PR #136439), never the launch adapter's.
+        if _api_request_profile.get():
+            model_name = self._resolve_model_name(str(_get_scoped_secret("API_SERVER_MODEL_NAME", "") or ""))
+            owner = str(_get_scoped_secret("API_SERVER_MODEL_OWNER", "") or "").strip() or "hermes"
+        else:
+            model_name, owner = self._model_name, self._model_owner
 
         def _model(mid: str, root: str, parent) -> dict[str, Any]:
-            return {"id": mid, "object": "model", "created": now, "owned_by": "hermes", "permission": [],
+            return {"id": mid, "object": "model", "created": now, "owned_by": owner, "permission": [],
                     "root": root, "parent": parent}
         models = [_model(model_name, model_name, None)]
         models.extend(

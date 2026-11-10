@@ -12,6 +12,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from agent import secret_scope as ss
 from gateway.config import GatewayConfig, PlatformConfig
 from gateway.platforms.api_server import (
     APIServerAdapter,
@@ -196,6 +197,54 @@ class TestApiServerModelsUnderProfile:
             assert adapter._resolve_model_name("") == "coder"
         finally:
             _api_request_profile.reset(token_prof)
+
+    @pytest.mark.asyncio
+    async def test_models_uses_profile_model_name_override(self, tmp_path, monkeypatch):
+        """A multiplexed profile exposes its configured API model alias (upstream PR #136439)."""
+        await self._assert_profile_models(tmp_path, monkeypatch, {
+            "worker": "API_SERVER_MODEL_NAME=worker-api\n"}, "worker", ("worker-api", "hermes"))
+
+    @staticmethod
+    async def _assert_profile_models(tmp_path, monkeypatch, envs, profile, expected):
+        """GET /p/<profile>/v1/models over real HTTP; envs maps profile -> extra .env lines."""
+        homes = {"default": tmp_path}
+        for name, lines in envs.items():
+            home = tmp_path / "profiles" / name
+            home.mkdir(parents=True, exist_ok=True)
+            (home / ".env").write_text(f"API_SERVER_KEY={name}-profile-test-token-0001\n{lines}",
+                                       encoding="utf-8")
+            homes[name] = home
+        adapter = _make_adapter(multiplex=True)
+        monkeypatch.setattr("hermes_cli.profiles.profiles_to_serve",
+                            lambda multiplex: list(homes.items()))
+        monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: homes[name])
+        ss.set_multiplex_active(True)
+        app = web.Application(middlewares=[adapter._make_profile_prefix_middleware()])
+        app.router.add_get("/p/{profile}/v1/models", adapter._handle_models)
+        try:
+            async with TestClient(TestServer(app)) as client:
+                response = await client.get(
+                    f"/p/{profile}/v1/models",
+                    headers={"Authorization": f"Bearer {profile}-profile-test-token-0001"})
+                assert response.status == 200
+                first = (await response.json())["data"][0]
+                assert (first["id"], first["owned_by"]) == expected
+        finally:
+            ss.set_multiplex_active(False)
+
+    @pytest.mark.asyncio
+    async def test_models_uses_profile_model_owner_override(self, tmp_path, monkeypatch):
+        """A profile can brand owned_by publicly without touching other profiles."""
+        await self._assert_profile_models(tmp_path, monkeypatch, {
+            "worker": "API_SERVER_MODEL_NAME=worker-api\nAPI_SERVER_MODEL_OWNER=acme\n"},
+            "worker", ("worker-api", "acme"))
+
+    @pytest.mark.asyncio
+    async def test_profile_overrides_do_not_bleed_across_profiles(self, tmp_path, monkeypatch):
+        """A profile without overrides keeps the existing defaults, not worker's name/owner."""
+        await self._assert_profile_models(tmp_path, monkeypatch, {
+            "worker": "API_SERVER_MODEL_NAME=worker-api\nAPI_SERVER_MODEL_OWNER=acme\n",
+            "coder": ""}, "coder", ("hermes-agent", "hermes"))
 
 
 class TestApiServerSessionProfileBinding:

@@ -126,7 +126,8 @@ def _api_server(config: GatewayConfig) -> None:
     extra = _enable_from_env(config, Platform.API_SERVER, pop_marker=True, warn=False).extra
     extra["key"] = key
     csv_extras(extra, (("cors_origins", getenv("API_SERVER_CORS_ORIGINS")),))
-    env_extras(extra, (("port", "API_SERVER_PORT", INT), ("host", "API_SERVER_HOST"), ("model_name", "API_SERVER_MODEL_NAME")))
+    env_extras(extra, (("port", "API_SERVER_PORT", INT), ("host", "API_SERVER_HOST"), ("model_name", "API_SERVER_MODEL_NAME"),
+                       ("model_owner", "API_SERVER_MODEL_OWNER")))
 
 
 def _webhook(config: GatewayConfig) -> None:

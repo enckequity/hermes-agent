@@ -3083,6 +3083,10 @@ OPTIONAL_ENV_VARS = OptionalEnvVars({
         "Model name advertised on /v1/models. Defaults to the profile name (or 'hermes-agent' "
         "for the default profile). Useful for multi-user setups with OpenWebUI.",
         "API server model name", None, advanced=True),
+    "API_SERVER_MODEL_OWNER": _msg(
+        "Public owned_by value advertised on /v1/models (default: 'hermes'). Branding only; "
+        "does not change inference routing or provider disclosures.",
+        "API server model owner", None, advanced=True),
     "GATEWAY_PROXY_URL": _msg(
         "URL of a remote Hermes API server to forward messages to (proxy mode). When set, the "
         "gateway handles platform I/O only — all agent work is delegated to the remote server. "

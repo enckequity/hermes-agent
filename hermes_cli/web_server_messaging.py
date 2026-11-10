@@ -29,7 +29,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
         "docs_url": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/",
         "env_vars": (
             "API_SERVER_ENABLED", "API_SERVER_KEY", "API_SERVER_PORT", "API_SERVER_HOST",
-            "API_SERVER_MODEL_NAME",
+            "API_SERVER_MODEL_NAME", "API_SERVER_MODEL_OWNER",
         ),
         "required_env": (),
     },

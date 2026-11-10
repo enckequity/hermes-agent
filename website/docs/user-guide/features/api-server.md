@@ -833,6 +833,7 @@ The API server gives full access to hermes-agent's toolset, **including terminal
 | `API_SERVER_KEY` | _(required)_ | Bearer token for auth |
 | `API_SERVER_CORS_ORIGINS` | _(none)_ | Comma-separated allowed browser origins |
 | `API_SERVER_MODEL_NAME` | _(profile name)_ | Model name on `/v1/models`. Defaults to profile name, or `hermes-agent` for default profile. |
+| `API_SERVER_MODEL_OWNER` | `hermes` | Public `owned_by` value on `/v1/models` (config: `model_owner`). Branding only; routing unchanged. |
 
 ### config.yaml
 
