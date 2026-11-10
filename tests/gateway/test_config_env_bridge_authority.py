@@ -83,6 +83,14 @@ def _run_gateway_import(
     ):
         if k in os.environ and k not in env:
             env[k] = os.environ[k]
+    # The clean child env drops PYTEST_CURRENT_TEST, which disarms
+    # managed_scope's in-suite skip of the system /etc/hermes. On a host with a
+    # real managed scope its overlay (e.g. agent.max_turns) would then beat the
+    # launch home's values. Pin an explicit empty managed scope instead.
+    if "HERMES_MANAGED_DIR" not in env:
+        no_managed = hermes_home / "_test_empty_managed_scope"
+        no_managed.mkdir(parents=True, exist_ok=True)
+        env["HERMES_MANAGED_DIR"] = str(no_managed)
 
     result = subprocess.run(
         [sys.executable, "-c", script],
