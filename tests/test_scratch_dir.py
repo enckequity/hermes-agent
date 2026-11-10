@@ -212,6 +212,10 @@ class TestScratchDirPermissionPolicy:
         for var in ("HERMES_HOME_MODE", "HERMES_MANAGED", "HERMES_CONTAINER",
                     "HERMES_SKIP_CHMOD", "HERMES_UID", "HERMES_GID"):
             monkeypatch.delenv(var, raising=False)
+        # Env removal alone leaves filesystem container signals (e.g. a real Docker /.dockerenv)
+        # live, and the canonical detector then keeps the operator's mode. Pin the host to
+        # non-container here; container cases opt back in via HERMES_CONTAINER or this seam.
+        monkeypatch.setattr("hermes_constants._detect_container", lambda: False)
 
     def test_default_is_owner_only(self, tmp_path, monkeypatch):
         self._isolate_env(monkeypatch, tmp_path)
