@@ -495,6 +495,7 @@ class TestLoadGatewayConfig:
             "API_SERVER_HOST",
             "API_SERVER_CORS_ORIGINS",
             "API_SERVER_MODEL_NAME",
+            "API_SERVER_MODEL_OWNER",
         ):
             monkeypatch.delenv(key, raising=False)
 

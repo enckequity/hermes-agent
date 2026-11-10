@@ -865,32 +865,6 @@ def _make_request_fingerprint(body: dict[str, Any], keys: list[str]) -> str:
     return hashlib.sha256(repr(subset).encode("utf-8")).hexdigest()
 
 
-def _names_launch_profile(profile: str) -> bool:
-    """True when a /p/<profile>/ prefix names the profile this process was LAUNCHED as: its
-    un-prefixed and prefixed requests are one profile and must key one session."""
-    try:
-        from hermes_cli.profiles import profile_matches_home
-        from hermes_constants import get_routing_process_hermes_home
-        return profile_matches_home(profile, home=get_routing_process_hermes_home())
-    except Exception:
-        return False
-
-
-def _derive_chat_session_id(system_prompt: Optional[str], first_user_message: str,
-                            profile: Optional[str] = None) -> str:
-    """Stable session id from the system prompt + first user message (constant across all
-    turns of an Open WebUI-style conversation), so one Hermes session/sandbox is reused.
-    A routed ``/p/<profile>/`` prefix namespaces the seed: the id keys process-wide state
-    (session store, per-session sandbox), so two profiles opening with identical text must not
-    collide (#123989). Default/standalone ids are unchanged so live conversations survive, and
-    the launch profile addressed through its own ``/p/<launch>/`` prefix keeps the un-prefixed id."""
-    seed = f"{system_prompt or ''}\n{first_user_message}"
-    if profile and profile != "default" and not _names_launch_profile(profile):
-        seed = f"{profile}\0{seed}"
-    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-    return f"api-{digest}"
-
-
 _CRON_AVAILABLE = False
 try:
     from cron.jobs import (
@@ -1060,6 +1034,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")))
         self._model_name: str = self._resolve_model_name(
             extra.get("model_name", _get_scoped_secret("API_SERVER_MODEL_NAME", "")))
+        # Optional public ``owned_by`` branding for /v1/models; Hermes default preserved.
+        self._model_owner: str = str(extra.get("model_owner", _get_scoped_secret("API_SERVER_MODEL_OWNER", "")) or "").strip() or "hermes"
         # alias (client "model") -> {model, provider?, api_key? (UPSTREAM, never logged), base_url?}
         self._model_routes: dict[str, dict[str, Any]] = self._parse_model_routes(extra.get("model_routes"))
         # Opt-in bare ``model`` passthrough on OpenAI-compatible surfaces (generic clients
@@ -2318,10 +2294,15 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         model only, never credentials). Under /p/<profile>/ the primary id follows that profile."""
         now = int(time.time())
         # The middleware already entered the profile scope, so get_active_profile_name() resolves.
-        model_name = self._resolve_model_name("") if _api_request_profile.get() else self._model_name
+        # Under /p/<profile>/ read that profile's own overrides (upstream PR #136439), never the launch adapter's.
+        if _api_request_profile.get():
+            model_name = self._resolve_model_name(str(_get_scoped_secret("API_SERVER_MODEL_NAME", "") or ""))
+            owner = str(_get_scoped_secret("API_SERVER_MODEL_OWNER", "") or "").strip() or "hermes"
+        else:
+            model_name, owner = self._model_name, self._model_owner
 
         def _model(mid: str, root: str, parent) -> dict[str, Any]:
-            return {"id": mid, "object": "model", "created": now, "owned_by": "hermes", "permission": [],
+            return {"id": mid, "object": "model", "created": now, "owned_by": owner, "permission": [],
                     "root": root, "parent": parent}
         models = [_model(model_name, model_name, None)]
         models.extend(

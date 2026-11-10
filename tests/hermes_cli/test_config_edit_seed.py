@@ -53,6 +53,9 @@ def _doctor_fix(tmp_path, monkeypatch, cfg):
     home = cfg.get_hermes_home()
     monkeypatch.setattr(doctor, "HERMES_HOME", home)
     monkeypatch.setattr(doctor, "PROJECT_ROOT", root)
+    # Unmanaged, non-container seed: a real Docker host would otherwise skip the 0600 chmod (the
+    # container skip itself is covered by test_secure_file_skips_chmod_on_canonical_container_signal).
+    monkeypatch.setattr("hermes_constants._detect_container", lambda: False)
     assert _check_config_file(True).fixed == 1
     if os.name == "posix":
         assert (home / "config.yaml").stat().st_mode & 0o777 == 0o600

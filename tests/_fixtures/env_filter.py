@@ -307,6 +307,7 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     "API_SERVER_KEY",
     "API_SERVER_CORS_ORIGINS",
     "API_SERVER_MODEL_NAME",
+    "API_SERVER_MODEL_OWNER",
     # Platform gating — set by load_gateway_config() as a side effect when
     # a config.yaml is present, so individual test bodies that call the
     # loader leak these values into later tests in the same process.

@@ -26,12 +26,12 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
+from gateway.platforms.api_server_profile_prefix import _derive_chat_session_id
 from gateway.platforms.api_server import (
     APIServerAdapter,
     ResponseStore,
     _api_request_profile,
     _IdempotencyCache,
-    _derive_chat_session_id,
     _redact_api_error_text,
     _request_agent_overrides,
     _request_relay_metadata,

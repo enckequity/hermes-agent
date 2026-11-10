@@ -115,3 +115,21 @@ def _base_url(name, prompt_name=None):
     """Provider ``*_BASE_URL`` override entry (advanced, not a secret)."""
     prompt = f"{prompt_name or name} base URL (leave empty for default)"
     return _prov(f"{name} base URL override", prompt, None, password=False)
+
+
+AGENT_SETTING_ENV_VARS = {
+    # ── Agent settings ── (MESSAGING_CWD is gone: use terminal.cwd in config.yaml, which the
+    # gateway bridges to TERMINAL_CWD.)
+    "SUDO_PASSWORD": _setting(
+        "Sudo password for terminal commands requiring root access; set to an explicit empty "
+        "string to try empty without prompting", "Sudo password", None, password=True),
+    # HERMES_TOOL_PROGRESS_MODE (deprecated; use display.tool_progress) is intentionally NOT listed:
+    # this dict feeds user-facing surfaces (dashboard keys page, setup checklists), so deprecated
+    # knobs stay in config._EXTRA_ENV_KEYS only. HERMES_TOOL_PROGRESS is unsupported.
+    "HERMES_PREFILL_MESSAGES_FILE": _setting(
+        "Path to JSON file with ephemeral prefill messages for few-shot priming",
+        "Prefill messages file path", None),
+    "HERMES_EPHEMERAL_SYSTEM_PROMPT": _setting(
+        "Ephemeral system prompt injected at API-call time (never persisted to sessions)",
+        "Ephemeral system prompt", None),
+}
