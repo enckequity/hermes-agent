@@ -6,7 +6,7 @@ name: E2E Desktop core
 # duplicated / reordered / lost transcript text, a backend that never becomes
 # ready or leaves orphans, and broken clarify/approval round trips.
 #
-# Unlike the legacy visual lane (e2e-desktop.yml, disabled for flakiness) this
+# Unlike the retired legacy visual lane, this
 # one runs with retries: 0 and one worker; every wait is event-driven, and the
 # suite was held to 10/10 consecutive green full runs on a loaded host before
 # it was wired in.
