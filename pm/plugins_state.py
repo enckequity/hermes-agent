@@ -53,6 +53,7 @@ def read_home_selection(home: Path) -> Optional[dict[str, Any]]:
     An unreadable selection raises rather than shrinking the next dependency generation;
     empty YAML is an explicit empty configuration, as in the CLI loader.
     """
+    from hermes_cli.config_plugin_policy import apply_plugin_selection
     config_path = home / "config.yaml"
     config_version, read_config_doc = _selection_readers(config_path)
     # Stat before the YAML stack: a home without config needs none (PM's own runtime tree has none).
@@ -60,7 +61,7 @@ def read_home_selection(home: Path) -> Optional[dict[str, Any]]:
     try:
         config_version(config_path)
     except FileNotFoundError:
-        return None
+        return apply_plugin_selection(None)
     except OSError as exc:
         raise ValueError(f"could not read plugin selection: {config_path}") from exc
     # Missing YAML support is a broken runtime, not an empty plugin selection.
@@ -68,13 +69,13 @@ def read_home_selection(home: Path) -> Optional[dict[str, Any]]:
     try:
         config = read_config_doc(config_path)
     except FileNotFoundError:
-        return None
+        return apply_plugin_selection(None)
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"could not read plugin selection: {config_path}") from exc
     except YAMLError as exc:
         raise ValueError(f"could not parse plugin selection: {config_path}") from exc
     if config is None:
-        return {}
+        return apply_plugin_selection({})
     if not isinstance(config, dict):
         raise ValueError(f"configuration must be a mapping: {config_path}")
     for section in ("plugins", "memory"):
@@ -89,7 +90,7 @@ def read_home_selection(home: Path) -> Optional[dict[str, Any]]:
     provider = (config.get("memory") or {}).get("provider")
     if provider is not None and not isinstance(provider, str):
         raise ValueError(f"memory.provider must be a name: {config_path}")
-    return config
+    return apply_plugin_selection(config)
 
 
 def _enabled_from_config(config: dict[str, Any]) -> list[str]:
@@ -171,6 +172,8 @@ def enabled_plugins_ordered(*, proposed_home=None, enabled=None, disabled=None,
         config = config or {}
         if proposed_home is not None and home.resolve() == Path(proposed_home).resolve():
             config = {**config, "plugins": {"enabled": list(enabled or ()), "disabled": list(disabled or ())}}
+            from hermes_cli.config_plugin_policy import apply_plugin_selection
+            config = apply_plugin_selection(config)
         names = _enabled_from_config(config)
         provider = _provider_from_config(home, config, installing=installing)
         if provider and provider not in names:

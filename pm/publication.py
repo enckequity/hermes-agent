@@ -83,7 +83,9 @@ class PluginSelection:
     def __init__(self, selection: dict):
         from hermes_yaml import roundtrip_yaml
         from pm.plugin_eviction import settle_record
+        from hermes_cli.config_plugin_policy import user_plugin_selection, validate_plugin_selection
 
+        validate_plugin_selection(selection["enabled"], selection["disabled"])
         self.configs = selection_snapshot()
         self.home = Path(selection["home"]).resolve()
         if not self.home.is_relative_to(dependency_home_root().resolve()):
@@ -103,8 +105,13 @@ class PluginSelection:
         plugins = config.setdefault("plugins", {})
         if not isinstance(plugins, dict):
             raise ValueError(f"plugins must be a mapping in {self.path}")
+        optional = user_plugin_selection({"plugins": {
+            "enabled": sorted(selection["enabled"]), "disabled": sorted(selection["disabled"]),
+        }}, previous=config)
         plugins["enabled"] = sorted(selection["enabled"])
         plugins["disabled"] = sorted(selection["disabled"])
+        if optional is not None:
+            plugins.update(optional)
         settle_record(plugins, selection.get("settled", ()))
         output = io.StringIO()
         yaml.dump(config, output)

@@ -2182,7 +2182,12 @@ def _merge_managed_overlay(expanded: dict[str, Any]) -> tuple[dict[str, Any], An
     if isinstance(managed_normalized.get("model"), str):
         managed_normalized = dict(managed_normalized)
         managed_normalized["model"] = {"default": managed_normalized["model"]}
-    return _deep_merge(expanded, _expand_env_vars(managed_normalized)), managed_config
+    from hermes_cli.config_plugin_policy import plugin_selection
+    selected = plugin_selection(expanded, managed_config)
+    merged = _deep_merge(expanded, _expand_env_vars(managed_normalized))
+    if selected is not None:
+        merged.setdefault("plugins", {}).update(selected)
+    return merged, managed_config
 
 
 def _load_config_cache_hit(path_key: str, cache_sig: Any) -> Optional[dict[str, Any]]:
@@ -2343,7 +2348,11 @@ def _strip_managed_keys_for_save(config: dict[str, Any]) -> dict[str, Any]:
     managed_keys = managed_scope.managed_config_keys()
     if not managed_keys:
         return config
+    from hermes_cli.config_plugin_policy import user_plugin_selection
+    optional = user_plugin_selection(config, previous=require_readable_config_before_write(get_config_path()))
     config, _stripped = _strip_dotted_keys(copy.deepcopy(config), managed_keys)
+    if optional is not None:
+        config.setdefault("plugins", {}).update(optional)
     if _stripped:
         print(
             f"Note: {len(_stripped)} managed setting(s) were not saved "

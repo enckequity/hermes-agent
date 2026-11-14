@@ -148,7 +148,12 @@ def apply_managed_overlay(config: dict) -> dict:
         if isinstance(managed_expanded.get("model"), str):
             managed_expanded = dict(managed_expanded)
             managed_expanded["model"] = {"default": managed_expanded["model"]}
-        return _deep_merge(config, managed_expanded)
+        from hermes_cli.config_plugin_policy import plugin_selection
+        selected = plugin_selection(config, managed)
+        merged = _deep_merge(config, managed_expanded)
+        if selected is not None:
+            merged.setdefault("plugins", {}).update(selected)
+        return merged
     except Exception:
         logger.warning("managed scope: failed to apply config overlay", exc_info=True)
         return config
