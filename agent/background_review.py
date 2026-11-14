@@ -1419,6 +1419,42 @@ def _run_review_in_thread(
         _set_thread_approval_callback(None)
 
 
+_FROZEN_SKILLS_CAP = 60
+
+
+def unchangeable_skill_names() -> list[str]:
+    """Skills the review fork must leave alone, as the curator does: locked ones (``hermes curator lock``) and
+    ones whose directory this profile cannot write (read-only mounts, packaged installs). Without the list
+    the fork proposes patches that ``skill_manage`` then refuses one by one. Never raises."""
+    import os
+    names: set[str] = set()
+    try:
+        from tools.skill_lock import locked_skill_dirs
+        names.update(name for name, _path in locked_skill_dirs())
+    except Exception:
+        logger.debug("background review: locked skill lookup failed", exc_info=True)
+    try:
+        from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
+        for base in get_all_skills_dirs():
+            if not base.is_dir():
+                continue
+            for skill_md in base.rglob("SKILL.md"):
+                if not is_excluded_skill_path(skill_md, root=base) and not os.access(skill_md.parent, os.W_OK):
+                    names.add(skill_md.parent.name)
+    except Exception:
+        logger.debug("background review: writable skill scan failed", exc_info=True)
+    return sorted(names)
+
+
+def _frozen_skills_note(names: list[str]) -> str:
+    """Prompt note naming the skills the fork cannot change; plugin skills (``plugin:skill``) are read-only too."""
+    shown = names[:_FROZEN_SKILLS_CAP]
+    more = f" (and {len(names) - len(shown)} more)" if len(names) > len(shown) else ""
+    listed = f" These skills are locked or read-only in this profile: {', '.join(shown)}{more}." if shown else ""
+    return ("\n\nSkills you cannot change: any skill named plugin:skill is provided by a plugin and is read-only."
+            f"{listed} Do not patch, edit, write files in or recreate them; put a suggested change in your summary instead.")
+
+
 # (review_memory, review_skills) -> prompt attribute name; skills-only is also the default.
 _PROMPT_NAME_BY_SCOPE = {
     (True, True): "_COMBINED_REVIEW_PROMPT", (True, False): "_MEMORY_REVIEW_PROMPT",
@@ -1443,6 +1479,8 @@ def spawn_background_review_thread(
     # Per-agent overrides (agent._MEMORY_REVIEW_PROMPT etc.) keep working.
     name = _PROMPT_NAME_BY_SCOPE[(review_memory, review_skills)]
     prompt = getattr(agent, name, globals()[name])
+    if review_skills or not review_memory:  # every prompt that may edit skills
+        prompt += _frozen_skills_note(unchangeable_skill_names())
     if focus := (focus or "").strip():
         prompt = (
             f"{prompt}\n\nThe user explicitly requested this review with the following "
