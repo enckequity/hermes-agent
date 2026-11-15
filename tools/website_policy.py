@@ -77,25 +77,35 @@ def _require_mapping(value: Any, label: str) -> dict[str, Any]:
     return value or {}
 
 
-def _load_policy_config(config_path: Path) -> dict[str, Any]:
+def _load_policy_config(config_path: Path, *, managed: bool = False) -> dict[str, Any]:
+    """The ``security.website_blocklist`` mapping of ``config_path``. ``managed=True`` overlays the managed scope
+    (``/etc/hermes/config.yaml``) like every other config reader, so an administrator-pinned blocklist binds the web tools too;
+    it is set for the profile's own config, never for an explicit ``config_path`` (tests)."""
     from hermes_cli.config_backend import config_exists, read_config_doc
-    if not config_exists(config_path):
+    config: Any = {}
+    if config_exists(config_path):
+        try:
+            import hermes_yaml as yaml
+        except ImportError:
+            logger.debug("ruamel.yaml not installed — website blocklist disabled")
+            return dict(_DEFAULT_WEBSITE_BLOCKLIST)
+        try:
+            config = read_config_doc(config_path) or {}
+        except yaml.YAMLError as exc:
+            raise WebsitePolicyError(f"Invalid config YAML at {config_path}: {exc}") from exc
+        except OSError as exc:
+            raise WebsitePolicyError(f"Failed to read config file {config_path}: {exc}") from exc
+        if not isinstance(config, dict):
+            raise WebsitePolicyError("config root must be a mapping")
+    elif not managed:
         return dict(_DEFAULT_WEBSITE_BLOCKLIST)
-    try:
-        import hermes_yaml as yaml
-    except ImportError:
-        logger.debug("ruamel.yaml not installed — website blocklist disabled")
-        return dict(_DEFAULT_WEBSITE_BLOCKLIST)
-    try:
-        config = read_config_doc(config_path) or {}
-    except yaml.YAMLError as exc:
-        raise WebsitePolicyError(f"Invalid config YAML at {config_path}: {exc}") from exc
-    except OSError as exc:
-        raise WebsitePolicyError(f"Failed to read config file {config_path}: {exc}") from exc
-    if not isinstance(config, dict):
-        raise WebsitePolicyError("config root must be a mapping")
     security = _require_mapping(config.get("security", {}), "security")
     website_blocklist = _require_mapping(security.get("website_blocklist", {}), "security.website_blocklist")
+    if managed:
+        from hermes_cli.managed_scope import apply_managed_overlay
+        # Overlay a copy of only this branch (apply_managed_overlay mutates its argument and fails open).
+        overlaid = apply_managed_overlay({"security": {"website_blocklist": dict(website_blocklist)}})
+        website_blocklist = _require_mapping(overlaid["security"]["website_blocklist"], "security.website_blocklist")
     return {**_DEFAULT_WEBSITE_BLOCKLIST, **website_blocklist}
 
 
@@ -121,8 +131,9 @@ def load_website_blocklist(config_path: Optional[Path] = None) -> dict[str, Any]
         cached = _fresh_cached_policy(resolved_path, now)
         if cached is not None:
             return cached
+    explicit_path = config_path
     config_path = config_path or default_path
-    policy = _load_policy_config(config_path)
+    policy = _load_policy_config(config_path, managed=explicit_path is None)
     domains = map(_normalize_rule, _require_type(policy, "domains", list, []))
     pairs: list[tuple[str, str]] = [(p, "config") for p in domains if p]
     shared_files = _require_type(policy, "shared_files", list, [])
